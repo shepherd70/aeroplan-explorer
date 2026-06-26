@@ -169,6 +169,7 @@
     <button data-tab="sweet">Sweet-spot value finder</button>
     <button data-tab="grid">Flexible date grid</button>
     <button data-tab="afford">What can I book now?</button>
+    <button data-tab="rt">Round trips</button>
   </nav>
 
   <main>
@@ -216,6 +217,24 @@
     <section class="view" id="view-afford">
       <div id="affordCards" class="cards"></div>
       <div id="affordTable"></div>
+    </section>
+
+    <section class="view" id="view-rt">
+      <div class="controls-row">
+        <div class="field"><label>From (home)</label><select id="rtOrigin"></select></div>
+        <div class="field"><label>To (destination)</label><select id="rtDest"></select></div>
+        <div class="field"><label>Cabin</label><select id="rtCabin"></select></div>
+        <div class="field"><label>Min nights</label><input type="number" id="rtMin" min="0" value="3"></div>
+        <div class="field"><label>Max nights</label><input type="number" id="rtMax" min="1" value="21"></div>
+        <div class="field"><label>Sort by</label><select id="rtSort">
+          <option value="totalMiles">Fewest total points</option>
+          <option value="cpp">Best ¢/pt</option>
+          <option value="nights">Shortest trip</option>
+          <option value="dateOut">Outbound date</option>
+        </select></div>
+        <span class="hint" id="rtInfo"></span>
+      </div>
+      <div id="rtBody"></div>
     </section>
   </main>
 </div>
@@ -358,8 +377,8 @@ async function idbGet(k) { const db = await idb(); return new Promise((res,rej)=
 // --- Settings persistence ---------------------------------------------------
 function loadSettings() {
   const def = { home:[], cabins:["Y","W","J","F"], start:"", end:"", seats:0, maxMiles:0, balance:0, direct:false, afford:false,
-    roundTrip:false, pointValue:0,
-    sortDiscover:{key:"cheapest",dir:1}, sortAfford:{key:"miles",dir:1}, sortSweet:"mpm" };
+    roundTrip:false, pointValue:0, rtMinNights:3, rtMaxNights:21,
+    sortDiscover:{key:"cheapest",dir:1}, sortAfford:{key:"miles",dir:1}, sortSweet:"mpm", sortRT:"totalMiles" };
   try { return Object.assign(def, JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}")); }
   catch { return def; }
 }
@@ -441,6 +460,8 @@ function renderAll() {
   renderGridControls();
   renderGrid();
   renderAfford();
+  renderRTControls();
+  renderRT();
 }
 
 // === View 1: Destination discovery =========================================
@@ -728,6 +749,81 @@ function renderAfford() {
 }
 function card(big, lbl) { return `<div class="card"><div class="big">${big}</div><div class="lbl">${lbl}</div></div>`; }
 
+// === View 5: Round trips (real outbound + return pairing) ===================
+function renderRTControls() {
+  const origins = [...new Set(RECORDS.map((r) => r.origin))].sort();
+  const oSel = $("rtOrigin");
+  const curO = oSel.value || settings.home[0] || origins[0];
+  oSel.innerHTML = origins.map((o) => `<option ${o === curO ? "selected" : ""}>${esc(o)}</option>`).join("");
+  updateRTDests();
+  const cSel = $("rtCabin");
+  const curC = cSel.value || activeCabins()[0] || "J";
+  cSel.innerHTML = CABINS.map((X) => `<option value="${X}" ${X === curC ? "selected" : ""}>${cabinLabel(X)}</option>`).join("");
+  $("rtMin").value = settings.rtMinNights;
+  $("rtMax").value = settings.rtMaxNights;
+}
+function updateRTDests() {
+  const o = $("rtOrigin").value;
+  const dests = [...new Set(RECORDS.filter((r) => r.origin === o).map((r) => r.destination))].sort();
+  const dSel = $("rtDest");
+  const cur = dSel.value;
+  dSel.innerHTML = dests.map((d) => `<option ${d === cur ? "selected" : ""}>${esc(d)}${AIRPORTS[d] ? " — " + esc(AIRPORTS[d][2]) : ""}</option>`).join("");
+  [...dSel.options].forEach((op) => op.value = op.textContent.split(" — ")[0]);
+  if (cur && dests.includes(cur)) dSel.value = cur;
+}
+function renderRT() {
+  if (!DATA) return;
+  const origin = $("rtOrigin").value, dest = $("rtDest").value, cabin = $("rtCabin").value;
+  const res = Explore.roundTripRows(RECORDS, settings, {
+    origin, dest, cabin, minNights: settings.rtMinNights, maxNights: settings.rtMaxNights,
+    autoFares: DATA.cashFares || {}, manualFares: cashFares,
+    faresCurrency: DATA.meta?.fares?.currency || "", today: localToday(),
+  });
+  const info = $("rtInfo");
+  if (!res.hasReturnData) {
+    info.textContent = "";
+    $("rtBody").innerHTML = res.hasOutboundData
+      ? `<div class="empty-state" style="padding:50px 20px"><h2>No return availability for ${esc(dest)}→${esc(origin)}</h2>
+         <p>This cache has the outbound leg but not the return. Pull returns by setting
+         <code>pullReturns: true</code> in <code>ingest.mjs</code> (or <code>originRegions: []</code>), re-run it, then hit <b>↻ Reload</b>.</p></div>`
+      : `<div class="empty-state" style="padding:50px 20px"><h2>No ${cabinLabel(cabin)} availability ${esc(origin)}→${esc(dest)}</h2>
+         <p>Pick another route or cabin, or widen the date window in the filters.</p></div>`;
+    return;
+  }
+  const cmp = {
+    totalMiles: (a, b) => a.totalMiles - b.totalMiles,
+    cpp: (a, b) => (b.cpp ?? -1) - (a.cpp ?? -1),
+    nights: (a, b) => a.nights - b.nights,
+    dateOut: (a, b) => (a.dateOut < b.dateOut ? -1 : a.dateOut > b.dateOut ? 1 : 0),
+  }[settings.sortRT] || ((a, b) => a.totalMiles - b.totalMiles);
+  const rows = res.rows.slice().sort(cmp);
+  const bal = settings.balance;
+  const curHdr = rows.find((r) => r.taxesCurrency)?.taxesCurrency || "";
+  info.textContent = `${rows.length} round trip${rows.length === 1 ? "" : "s"} ${origin}⇄${dest} · ${cabinLabel(cabin)} · ${settings.rtMinNights}–${settings.rtMaxNights} nights`;
+  const milesVals = rows.map((r) => r.totalMiles);
+  const mn = Math.min(...milesVals), mx = Math.max(...milesVals);
+  let h = `<div class="tablewrap"><table><thead><tr>
+    <th class="l">Outbound</th><th class="l">Return</th><th>Nights</th><th>Out pts</th><th>Ret pts</th><th>Total pts</th>
+    <th>Taxes${curHdr ? " (" + esc(curHdr) + ")" : ""}</th><th>RT ¢/pt</th><th class="l">Fits balance</th></tr></thead><tbody>`;
+  for (const r of rows) {
+    const t = mx > mn ? (r.totalMiles - mn) / (mx - mn) : 0;
+    const fits = bal > 0 && r.totalMiles <= bal;
+    h += `<tr>
+      <td class="l">${r.dateOut}${r.directOut ? ' <span class="badge direct">nonstop</span>' : ""}</td>
+      <td class="l">${r.dateRet}${r.directRet ? ' <span class="badge direct">nonstop</span>' : ""}</td>
+      <td class="num">${r.nights}</td>
+      <td class="num">${fmt(r.milesOut)}</td>
+      <td class="num">${fmt(r.milesRet)}</td>
+      <td class="miles num" style="background:${colorFor(t)};color:#04140a">${fmt(r.totalMiles)}</td>
+      <td class="num" title="${r.totalTaxes != null ? "outbound $" + r.taxesOut.toFixed(2) + " + return $" + r.taxesRet.toFixed(2) : "taxes not captured for one or both legs"}">${r.totalTaxes != null ? "$" + fmt(r.totalTaxes) : "—"}</td>
+      <td class="num" title="${r.cpp == null ? "add a cash fare on both legs (Sweet-spot tab) for ¢/pt" : r.cppIsNet ? "net of $" + fmt(r.totalTaxes) + " " + esc(r.taxesCurrency) + " taxes" : "gross — taxes not netted"}">${r.cpp != null ? r.cpp.toFixed(2) : "—"}</td>
+      <td class="l">${bal > 0 ? (fits ? '<span class="badge afford">within balance</span>' : `<span class="muted">${fmt(r.totalMiles - bal)} over</span>`) : '<span class="muted">set balance</span>'}</td></tr>`;
+  }
+  h += `</tbody></table></div>
+    <p class="hint">Each row pairs an outbound date with the cheapest-points return ${settings.rtMinNights}–${settings.rtMaxNights} nights later. Points &amp; taxes are the real total of both legs; Aeroplan still prices each direction separately at booking, so confirm both. RT ¢/pt uses the two one-way cash fares when present.</p>`;
+  $("rtBody").innerHTML = h;
+}
+
 // --- Freshness + data-loaded -----------------------------------------------
 function setFreshness(text, warn) {
   const el = $("freshness"); el.textContent = text; el.className = "pill" + (warn ? " warn" : "");
@@ -772,6 +868,7 @@ function applySettingsToUI() {
   $("fRoundTrip").checked = settings.roundTrip;
   $("fAfford").checked = settings.afford;
   $("sweetSort").value = settings.sortSweet;
+  $("rtSort").value = settings.sortRT;
 }
 function readFiltersFromUI() {
   settings.home = $("fHome").value.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
@@ -814,6 +911,12 @@ function switchTab(name) {
   $("gDest").addEventListener("change", renderGrid);
   $("gCabin").addEventListener("change", renderGrid);
   $("sweetSort").addEventListener("change", () => { settings.sortSweet = $("sweetSort").value; saveSettings(); renderSweet(); });
+  $("rtOrigin").addEventListener("change", () => { updateRTDests(); renderRT(); });
+  $("rtDest").addEventListener("change", renderRT);
+  $("rtCabin").addEventListener("change", renderRT);
+  $("rtMin").addEventListener("change", () => { settings.rtMinNights = Math.max(0, parseInt($("rtMin").value) || 0); saveSettings(); renderRT(); });
+  $("rtMax").addEventListener("change", () => { settings.rtMaxNights = Math.max(1, parseInt($("rtMax").value) || 60); saveSettings(); renderRT(); });
+  $("rtSort").addEventListener("change", () => { settings.sortRT = $("rtSort").value; saveSettings(); renderRT(); });
 
   restoreHandle();
 })();

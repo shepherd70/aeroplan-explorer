@@ -32,6 +32,10 @@ const CONFIG = {
   // Optional DESTINATION region filter (single value or null = all destinations).
   destinationRegion: null,
 
+  // Pull RETURN legs too (dest→home), so the Round-trips view can pair outbound+return.
+  // Adds a reverse pass per origin region — roughly doubles quota. Off by default.
+  pullReturns: false,
+
   take: 1000,                    // page size (10–1000). Bigger = fewer calls.
   maxPagesPerRegion: 60,         // safety cap so a bad loop can't drain your quota
   maxRetries: 4,                 // retries on 429/5xx (exponential backoff, honors Retry-After)
@@ -75,7 +79,13 @@ async function main() {
   );
   console.log("");
 
-  const regionPasses = CONFIG.originRegions.length ? CONFIG.originRegions : [null];
+  // Each pass is an {o: originRegion, d: destinationRegion} filter (null = unfiltered).
+  const baseRegions = CONFIG.originRegions.length ? CONFIG.originRegions : [null];
+  const passes = baseRegions.map((r) => ({ o: r, d: CONFIG.destinationRegion }));
+  if (CONFIG.pullReturns) {
+    // The return of an (origin=R → dest=D) outbound is (origin=D → dest=R); pull those too.
+    for (const r of baseRegions) passes.push({ o: CONFIG.destinationRegion, d: r });
+  }
   const byId = new Map(); // dedupe across passes by record id
   let apiCalls = 0;
   let quotaRemaining = null;
@@ -93,7 +103,13 @@ async function main() {
   }
 
   try {
-    for (const region of regionPasses) {
+    for (const pass of passes) {
+      // Don't start another pass once the daily quota is nearly drained.
+      if (quotaRemaining != null && quotaRemaining <= CONFIG.quotaFloor) {
+        console.log(`\n  ⚠ Skipping remaining passes — only ~${quotaRemaining} API calls left today.`);
+        break;
+      }
+      const label = `${pass.o || "ALL"}→${pass.d || "ALL"}`;
       let cursor = null;
       let skip = 0;
       let lastCursor = null;
@@ -105,8 +121,8 @@ async function main() {
           end_date: CONFIG.endDate,
           take: String(CONFIG.take),
         });
-        if (region) params.set("origin_region", region);
-        if (CONFIG.destinationRegion) params.set("destination_region", CONFIG.destinationRegion);
+        if (pass.o) params.set("origin_region", pass.o);
+        if (pass.d) params.set("destination_region", pass.d);
         // Paginate with whichever mode the first page revealed (cursor preferred).
         if (mode === "cursor" && cursor != null) params.set("cursor", String(cursor));
         else if (mode === "skip" && skip > 0) params.set("skip", String(skip));
@@ -126,13 +142,13 @@ async function main() {
           if ((res.status === 429 || res.status >= 500) && attempt < CONFIG.maxRetries) {
             const ra = parseInt(res.headers.get("retry-after") || "", 10);
             const waitMs = Number.isFinite(ra) ? ra * 1000 : Math.min(30000, 1000 * 2 ** attempt);
-            console.warn(`\n  ⚠ HTTP ${res.status} on ${region || "ALL"} page ${page + 1} — retrying in ${Math.round(waitMs / 1000)}s`);
+            console.warn(`\n  ⚠ HTTP ${res.status} on ${label} page ${page + 1} — retrying in ${Math.round(waitMs / 1000)}s`);
             await sleep(waitMs);
             continue;
           }
           const body = await res.text().catch(() => "");
           throw new Error(
-            `HTTP ${res.status} ${res.statusText} on ${region || "ALL"} page ${page + 1}` +
+            `HTTP ${res.status} ${res.statusText} on ${label} page ${page + 1}` +
               (body ? `\n   ${body.slice(0, 400)}` : "")
           );
         }
@@ -155,7 +171,6 @@ async function main() {
           byId.set(rec.id || `${rec.origin}-${rec.destination}-${rec.date}`, rec);
         }
 
-        const label = region || "ALL";
         process.stdout.write(
           `\r  ${label}: page ${page + 1}, ${byId.size} unique records` +
             (quotaRemaining != null ? `, ~${quotaRemaining} calls left` : "")
@@ -207,6 +222,7 @@ function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFar
       dateWindow: { start: CONFIG.startDate, end: CONFIG.endDate },
       originRegions: CONFIG.originRegions,
       destinationRegion: CONFIG.destinationRegion,
+      pullReturns: CONFIG.pullReturns,
       recordCount: records.length,
       apiCallsUsed: apiCalls,
       quotaRemainingAtEnd: quotaRemaining,
