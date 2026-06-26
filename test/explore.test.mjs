@@ -11,15 +11,19 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const { filtered, qualifyingCabins, discoverRows, sweetRows, affordRows } = Explore;
 
 // --- fixture helpers ---------------------------------------------------------
-function cab(miles, { available = miles > 0, seats = 9, direct = false, airlines = "AC" } = {}) {
-  return { available, miles, directMiles: 0, seats, direct, airlines };
+function cab(miles, { available = miles > 0, seats = 9, direct = false, airlines = "AC", taxes } = {}) {
+  const c = { available, miles, directMiles: 0, seats, direct, airlines };
+  if (taxes != null) c.taxes = taxes; // cents; omit to simulate a pre-tax cache
+  return c;
 }
 function rec(origin, destination, date, cabins, opts = {}) {
-  const { oRegion = "North America", dRegion = "Asia", distance = 5000, id } = opts;
+  const { oRegion = "North America", dRegion = "Asia", distance = 5000, id, taxesCurrency } = opts;
   const full = { Y: cab(0, { available: false }), W: cab(0, { available: false }), J: cab(0, { available: false }), F: cab(0, { available: false }) };
   Object.assign(full, cabins);
-  return { id: id ?? `${origin}-${destination}-${date}`, date, origin, originRegion: oRegion,
-           destination, destinationRegion: dRegion, distance, source: "aeroplan", updatedAt: null, cabins: full };
+  const r = { id: id ?? `${origin}-${destination}-${date}`, date, origin, originRegion: oRegion,
+              destination, destinationRegion: dRegion, distance, source: "aeroplan", updatedAt: null, cabins: full };
+  if (taxesCurrency != null) r.taxesCurrency = taxesCurrency;
+  return r;
 }
 const S = (over = {}) => Object.assign(
   { home: [], cabins: ["Y", "W", "J", "F"], start: "", end: "", seats: 0, maxMiles: 0,
@@ -129,6 +133,41 @@ test("affordRows dedupes to the cheapest option per origin-dest-cabin and unions
   assert.equal(list.length, 1);
   assert.equal(list[0].miles, 58000);
   assert.equal(list[0].dates.size, 2);
+});
+
+// --- taxes / tax-honest cpp --------------------------------------------------
+test("sweetRows makes cpp tax-honest when fare and tax share a currency", () => {
+  const recs = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000, { taxes: 8650 }) }, { distance: 4000, taxesCurrency: "CAD" })];
+  const r = sweetRows(recs, S(), { autoFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
+  assert.equal(r.taxes, 86.5);
+  assert.equal(r.taxesCurrency, "CAD");
+  assert.equal(r.cppIsNet, true);
+  assert.equal(r.cpp, ((900 - 86.5) * 100) / 60000); // net of the $86.50 award taxes
+});
+
+test("sweetRows falls back to gross cpp when currencies differ or taxes are unknown", () => {
+  const usd = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000, { taxes: 8650 }) }, { distance: 4000, taxesCurrency: "USD" })];
+  const diff = sweetRows(usd, S(), { autoFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
+  assert.equal(diff.cppIsNet, false);
+  assert.equal(diff.cpp, (900 * 100) / 60000); // can't subtract a USD tax from a CAD fare
+
+  const noTax = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000) }, { distance: 4000 })]; // pre-tax cache
+  const g = sweetRows(noTax, S(), { autoFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
+  assert.equal(g.taxes, null);
+  assert.equal(g.cppIsNet, false);
+  assert.equal(g.cpp, (900 * 100) / 60000);
+});
+
+test("affordRows surfaces award taxes (dollars) for the cheapest option", () => {
+  const recs = [
+    rec("YVR", "NRT", "2026-07-01", { J: cab(62000, { taxes: 9000 }) }, { taxesCurrency: "CAD" }),
+    rec("YVR", "NRT", "2026-07-05", { J: cab(58000, { taxes: 8650 }) }, { taxesCurrency: "CAD" }),
+  ];
+  const { list } = affordRows(recs, S({ balance: 80000 }));
+  assert.equal(list.length, 1);
+  assert.equal(list[0].miles, 58000);
+  assert.equal(list[0].taxes, 86.5); // taxes of the cheapest (58k) option
+  assert.equal(list[0].taxesCurrency, "CAD");
 });
 
 // --- integration over the committed sample ----------------------------------

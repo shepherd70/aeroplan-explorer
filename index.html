@@ -547,7 +547,8 @@ function renderMap(rows) {
 
 // === View 2: Sweet-spot value finder =======================================
 const sweetRows = () => Explore.sweetRows(RECORDS, settings,
-  { autoFares: DATA.cashFares || {}, manualFares: cashFares, today: localToday() });
+  { autoFares: DATA.cashFares || {}, manualFares: cashFares, today: localToday(),
+    faresCurrency: DATA.meta?.fares?.currency || "" });
 function renderSweet() {
   const rows = sweetRows();
   const sortBy = settings.sortSweet;
@@ -560,7 +561,7 @@ function renderSweet() {
   rows.sort(cmp);
   let h = `<div class="tablewrap"><table><thead><tr>
     <th class="l">Route</th><th class="l">Cabin</th><th class="l">Region</th><th>Distance</th>
-    <th>Points</th><th>Pts/1000mi</th><th>Seats</th><th class="l">Cash $ (opt)</th><th>¢/pt</th><th>Est $</th><th class="l">Value</th></tr></thead><tbody>`;
+    <th>Points</th><th>Pts/1000mi</th><th>Seats</th><th>Taxes</th><th class="l">Cash $ (opt)</th><th>¢/pt</th><th>Est $</th><th class="l">Value</th></tr></thead><tbody>`;
   const mpms = rows.map((r) => r.mpm).filter((x) => x != null);
   const mn = Math.min(...mpms), mx = Math.max(...mpms);
   for (const r of rows) {
@@ -571,8 +572,9 @@ function renderSweet() {
       <td class="miles num">${fmt(r.miles)}</td>
       <td class="num" style="background:${colorFor(t)};color:${t!=null?'#04140a':'inherit'}">${r.mpm != null ? r.mpm.toFixed(0) : "—"}</td>
       <td class="num">${r.seats || "—"}</td>
+      <td class="num" title="${r.taxes != null ? "$" + r.taxes.toFixed(2) + " " + esc(r.taxesCurrency) + " taxes &amp; carrier surcharges on the award" : "Re-run node ingest.mjs to capture taxes"}">${r.taxes != null ? "$" + fmt(r.taxes) : "—"}</td>
       <td class="l"><input type="number" min="0" step="50" value="${r.fareValue ?? ""}" data-fare="${esc(r.fareKey)}" class="fareinp${r.fareAuto ? " auto" : ""}" title="${r.fareAuto ? "Auto cash fare from Amadeus — type to override, clear to revert" : ""}"></td>
-      <td class="num" style="${r.beatsValuation===true?'color:var(--good);font-weight:600':r.beatsValuation===false?'color:var(--bad)':''}">${r.cpp != null ? r.cpp.toFixed(2) : "—"}</td>
+      <td class="num" title="${r.cpp == null ? "" : r.cppIsNet ? "net of $" + r.taxes.toFixed(2) + " " + esc(r.taxesCurrency) + " award taxes" : "gross — taxes not netted (different currency or not yet captured)"}" style="${r.beatsValuation===true?'color:var(--good);font-weight:600':r.beatsValuation===false?'color:var(--bad)':''}">${r.cpp != null ? r.cpp.toFixed(2) : "—"}</td>
       <td class="num">${r.estValue != null ? "$" + fmt(r.estValue) : "—"}</td>
       <td class="l">${r.sweet ? '<span class="badge sweet">sweet spot</span>' : ""}</td></tr>`;
   }
@@ -580,7 +582,7 @@ function renderSweet() {
   const fm = DATA.meta?.fares;
   const fmDate = fm?.updatedAt ? fm.updatedAt.slice(0, 10) : "";
   const status = fm
-    ? `<p class="hint">Auto cash fares: <b>${fm.count}</b> routes in ${esc(fm.currency || "")}${fmDate ? `, updated ${fmDate}` : ""}${fm.pricedThisRun != null ? ` (${fm.pricedThisRun} re-priced last run)` : ""}. ¢/pt &amp; Est $ use this currency. Type in any Cash $ cell to override; clear it to revert to the auto fare.</p>`
+    ? `<p class="hint">Auto cash fares: <b>${fm.count}</b> routes in ${esc(fm.currency || "")}${fmDate ? `, updated ${fmDate}` : ""}${fm.pricedThisRun != null ? ` (${fm.pricedThisRun} re-priced last run)` : ""}. <b>¢/pt is net of the award’s taxes</b> when the fare &amp; tax share a currency (hover a ¢/pt cell to check); Est $ uses your point value. Type in any Cash $ cell to override; clear it to revert to the auto fare.</p>`
     : "";
   $("sweetTable").innerHTML = status + h;
   $("sweetTable").querySelectorAll("input[data-fare]").forEach((inp) =>
@@ -638,7 +640,7 @@ function renderGrid() {
     if (c && c.available && c.miles > 0) {
       if (settings.direct && !c.direct) continue;
       if (settings.seats > 0 && c.seats < settings.seats) continue;
-      if (!byDate[r.date] || c.miles < byDate[r.date].miles) byDate[r.date] = c;
+      if (!byDate[r.date] || c.miles < byDate[r.date].miles) byDate[r.date] = { ...c, _cur: r.taxesCurrency || "" };
     }
   }
   const dates = Object.keys(byDate);
@@ -673,7 +675,7 @@ function renderGrid() {
         const t = mx > mn ? (c.miles - mn) / (mx - mn) : 0;
         const aff = settings.balance > 0 && c.miles * tripMult() <= settings.balance;
         const k = c.miles >= 1000 ? Math.round(c.miles / 1000) + "k" : c.miles;
-        html += `<div class="cell has" style="background:${colorFor(t)}" title="${ds}: ${fmt(c.miles)} pts · ${c.seats || "?"} seats${c.direct ? " · nonstop" : ""}${c.airlines ? " · " + esc(c.airlines) : ""}">
+        html += `<div class="cell has" style="background:${colorFor(t)}" title="${ds}: ${fmt(c.miles)} pts${c.taxes != null ? " + $" + fmt(c.taxes / 100) + (c._cur ? " " + esc(c._cur) : "") + " taxes" : ""} · ${c.seats || "?"} seats${c.direct ? " · nonstop" : ""}${c.airlines ? " · " + esc(c.airlines) : ""}">
           <span class="d">${day}</span><span class="m">${k}${aff ? "✓" : ""}</span></div>`;
       } else {
         html += `<div class="cell empty"><span class="d">${day}</span></div>`;
@@ -703,17 +705,18 @@ function renderAfford() {
 
   const { key, dir } = sortState.afford;
   list.forEach((r) => r.dateCount = r.dates.size);
-  const val = (r) => key === "miles" ? r.miles : key === "dateCount" ? r.dateCount : key === "left" ? bal - r.miles * mult : r[key];
+  const val = (r) => key === "miles" ? r.miles : key === "dateCount" ? r.dateCount : key === "left" ? bal - r.miles * mult : key === "taxes" ? (r.taxes ?? Infinity) : r[key];
   list.sort((a, b) => { const x = val(a), y = val(b); return (typeof x === "string" ? x.localeCompare(y) : x - y) * dir; });
   const th = (k, label, cls = "") => `<th class="${cls} ${key === k ? "sorted" : ""}" data-k="${k}">${label}${key === k ? (dir > 0 ? " ▲" : " ▼") : ""}</th>`;
   let h = `<div class="tablewrap"><table><thead><tr>
-    ${th("origin","From","l")}${th("destination","To","l")}${th("cabin","Cabin","l")}${th("miles","Points (" + TL() + ")")}${th("left","Left (" + TL() + ")")}${th("dateCount","Dates")}<th class="l">Nonstop</th></tr></thead><tbody>`;
+    ${th("origin","From","l")}${th("destination","To","l")}${th("cabin","Cabin","l")}${th("miles","Points (" + TL() + ")")}${th("taxes","Taxes")}${th("left","Left (" + TL() + ")")}${th("dateCount","Dates")}<th class="l">Nonstop</th></tr></thead><tbody>`;
   const caveat = settings.roundTrip
-    ? `<p class="hint">Points shown are <b>round trip</b> (≈2× the one-way award) and still exclude cash taxes &amp; carrier surcharges. Aeroplan prices each direction separately, so the real total can differ — confirm both legs.</p>`
-    : `<p class="hint">Points shown are <b>one-way</b> per direction and exclude cash taxes &amp; carrier surcharges (which points can’t cover). Tick <b>Round trip</b> above to compare against ≈2× the points.</p>`;
+    ? `<p class="hint">Points shown are <b>round trip</b> (≈2× the one-way award); the <b>Taxes</b> column is the cash you still pay on top (shown ≈2× too — per-direction surcharges differ, so confirm both legs). Aeroplan prices each direction separately.</p>`
+    : `<p class="hint">Points shown are <b>one-way</b> per direction; the <b>Taxes</b> column is the cash you still pay on top (points can’t cover it). Tick <b>Round trip</b> above to compare against ≈2× the points.</p>`;
   for (const r of list) {
     h += `<tr><td class="l">${esc(r.origin)}</td><td class="l"><b>${esc(r.destination)}</b> <span class="muted">${esc(AIRPORTS[r.destination]?.[2] || "")}</span></td>
       <td class="l">${cabinLabel(r.cabin)}</td><td class="miles num">${fmt(r.miles * mult)}</td>
+      <td class="num" title="${r.taxes != null ? esc(r.taxesCurrency) + " award taxes" + (mult > 1 ? " ×" + mult + " (est.)" : "") : "re-ingest to capture taxes"}">${r.taxes != null ? "$" + fmt(r.taxes * mult) : "—"}</td>
       <td class="num">${fmt(bal - r.miles * mult)}</td><td class="num">${r.dateCount}</td>
       <td class="l">${r.direct ? '<span class="badge direct">nonstop</span>' : ""}</td></tr>`;
   }

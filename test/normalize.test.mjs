@@ -17,7 +17,7 @@ test("normalize maps Route fields, uppercases codes, trims the date", () => {
   assert.equal(rec.originRegion, "North America");
   assert.equal(rec.destinationRegion, "Asia");
   assert.equal(rec.distance, 4685);
-  assert.deepEqual(rec.cabins.J, { available: true, miles: 60000, directMiles: 0, seats: 4, direct: true, airlines: "NH" });
+  assert.deepEqual(rec.cabins.J, { available: true, miles: 60000, directMiles: 0, seats: 4, direct: true, airlines: "NH", taxes: 0 });
 });
 
 test("normalize parses comma-formatted mileage strings", () => {
@@ -50,6 +50,14 @@ test("toInt handles numbers, formatted strings, and garbage", () => {
   assert.equal(toInt(null), 0);
   assert.equal(toInt("n/a"), 0);
   assert.equal(toInt(12.7), 13); // rounds
+});
+
+test("normalize captures per-cabin taxes (cents) and the taxes currency", () => {
+  const rec = normalize({ Date: "2026-07-01", OriginAirport: "YVR", DestinationAirport: "NRT",
+    JMileageCost: "60000", JAvailable: true, JTotalTaxes: 8650, TaxesCurrency: "cad" });
+  assert.equal(rec.cabins.J.taxes, 8650);   // cents, i.e. $86.50
+  assert.equal(rec.taxesCurrency, "CAD");   // uppercased
+  assert.equal(rec.cabins.Y.taxes, 0);      // cabins without a tax figure default to 0
 });
 
 test("hasAnyCabin is true only with an available, priced cabin", () => {

@@ -252,6 +252,9 @@ function normalize(raw) {
       seats: toInt(raw[`${X}RemainingSeats`]) || 0,
       direct: !!raw[`${X}Direct`],
       airlines: (raw[`${X}Airlines`] || "").toString().trim(),
+      // Total cash payable on this award (taxes + carrier surcharges), in the smallest
+      // unit of taxesCurrency — i.e. cents. seats.aero reports this as an int; 0 = none.
+      taxes: toInt(raw[`${X}TotalTaxes`]) || 0,
     };
   }
 
@@ -263,6 +266,7 @@ function normalize(raw) {
     destination: String(destination).toUpperCase(),
     destinationRegion: get("DestinationRegion", "destinationRegion") || "",
     distance: toInt(get("Distance", "distance")) || 0,
+    taxesCurrency: (get("TaxesCurrency", "taxesCurrency") || "").toString().toUpperCase(),
     source: raw.Source || route.Source || CONFIG.source,
     updatedAt: raw.UpdatedAt || raw.updatedAt || null,
     cabins,
