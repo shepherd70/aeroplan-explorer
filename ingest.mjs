@@ -9,7 +9,7 @@
 // Zero dependencies — uses Node 18+ native fetch. (Tested on Node v24.)
 
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -44,10 +44,18 @@ const CONFIG = {
 // ---------------------------------------------------------------------------
 const CABINS = ["Y", "W", "J", "F"]; // economy, premium economy, business, first
 
-main().catch((err) => {
-  console.error("\n❌ Ingest failed:", err?.message || err);
-  process.exit(1);
-});
+// Run the ingester only when this file is executed directly — not when a test
+// (or another module) imports normalize() / helpers below.
+if (isMain(import.meta.url)) {
+  main().catch((err) => {
+    console.error("\n❌ Ingest failed:", err?.message || err);
+    process.exit(1);
+  });
+}
+
+function isMain(metaUrl) {
+  return !!process.argv[1] && metaUrl === pathToFileURL(process.argv[1]).href;
+}
 
 async function main() {
   const apiKey = loadApiKey();
@@ -313,3 +321,6 @@ function addDays(d, n) {
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+// Exported for unit tests. Importing this file does NOT run the ingester (see isMain).
+export { normalize, toInt, hasAnyCabin };

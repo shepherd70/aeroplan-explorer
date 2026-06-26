@@ -148,3 +148,21 @@ direction separately, so it's an estimate — confirm both legs).
   header shows the cache age and warns when it's over ~3 days old.
 - **Browser support:** "Open cache file…" uses the File System Access API (Chrome/Edge).
   Other browsers fall back to a normal file picker (no auto-reload).
+
+---
+
+## Development
+
+Still zero-dependency, still no build step. The explorer's pure data transforms live in
+`lib/explore.js` — a dual-target file that loads as a classic `<script>` in the browser
+(so opening `index.html` over `file://` keeps working) and also exports for Node, so the
+same logic is unit-tested.
+
+```
+node --test          # runs test/*.test.mjs (normalize + explorer transforms)
+node make-sample.mjs  # regenerate the committed sample-cache.json from a full pull
+```
+
+- `lib/explore.js` — pure: filtering, destination/sweet-spot/affordability aggregation. No DOM.
+- `ingest.mjs` exports `normalize()` (guarded so importing it doesn't run an ingest).
+- `index.html` keeps all rendering/DOM/event code and calls `Explore.*` for the data work.

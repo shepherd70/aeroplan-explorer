@@ -230,6 +230,8 @@
 
 <input type="file" id="fileFallback" accept=".json,application/json" style="display:none" />
 
+<!-- Pure data transforms (testable in Node, classic script so file:// still works). -->
+<script src="lib/explore.js"></script>
 <script>
 "use strict";
 
@@ -425,34 +427,11 @@ const tripMult = () => settings.roundTrip ? 2 : 1;          // round-trip ≈ 2�
 const TL = () => settings.roundTrip ? "round trip" : "1-way"; // trip-type label for affordability
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 
-// A record's cabins that pass ALL active filters; returns [{cabin, ...cabinData}]
-function qualifyingCabins(rec) {
-  const out = [];
-  for (const X of activeCabins()) {
-    const c = rec.cabins?.[X];
-    if (!c || !c.available || !(c.miles > 0)) continue;
-    if (settings.direct && !c.direct) continue;
-    if (settings.seats > 0 && c.seats < settings.seats) continue;
-    if (settings.maxMiles > 0 && c.miles > settings.maxMiles) continue;
-    if (settings.afford && !(settings.balance > 0 && c.miles * tripMult() <= settings.balance)) continue;
-    out.push({ cabin: X, ...c });
-  }
-  return out;
-}
-function filtered() {
-  const home = settings.home;
-  const s = settings.start, e = settings.end;
-  const out = [];
-  for (const r of RECORDS) {
-    if (home.length && !home.includes(r.origin)) continue;
-    if (s && r.date < s) continue;
-    if (e && r.date > e) continue;
-    const q = qualifyingCabins(r);
-    if (!q.length) continue;
-    out.push({ rec: r, q });
-  }
-  return out;
-}
+// Pure data transforms live in lib/explore.js (the Explore.* namespace); these thin
+// wrappers bind them to the app's current RECORDS / settings / fares so the render
+// code below is unchanged.
+const filtered = () => Explore.filtered(RECORDS, settings);
+const qualifyingCabins = (rec) => Explore.qualifyingCabins(rec, settings);
 
 // --- Render: dispatcher -----------------------------------------------------
 function renderAll() {
@@ -465,30 +444,7 @@ function renderAll() {
 }
 
 // === View 1: Destination discovery =========================================
-function discoverRows() {
-  const byDest = new Map();
-  for (const { rec, q } of filtered()) {
-    let d = byDest.get(rec.destination);
-    if (!d) {
-      d = { destination: rec.destination, region: rec.destinationRegion, distance: rec.distance,
-            dates: new Set(), direct: false, cab: { Y:Infinity, W:Infinity, J:Infinity, F:Infinity },
-            bestOrigin: null, bestMiles: Infinity };
-      byDest.set(rec.destination, d);
-    }
-    d.dates.add(rec.date);
-    if (rec.distance && !d.distance) d.distance = rec.distance;
-    for (const c of q) {
-      if (c.miles < d.cab[c.cabin]) d.cab[c.cabin] = c.miles;
-      if (c.miles < d.bestMiles) { d.bestMiles = c.miles; d.bestOrigin = rec.origin; }
-      if (c.direct) d.direct = true;
-    }
-  }
-  const rows = [...byDest.values()].map((d) => {
-    const cheapest = Math.min(...CABINS.map((X) => d.cab[X]));
-    return { ...d, dateCount: d.dates.size, cheapest: isFinite(cheapest) ? cheapest : null };
-  });
-  return rows;
-}
+const discoverRows = () => Explore.discoverRows(RECORDS, settings);
 function renderDiscover() {
   const rows = discoverRows();
   $("discoverCount").textContent = rows.length + " destination" + (rows.length === 1 ? "" : "s");
@@ -590,46 +546,8 @@ function renderMap(rows) {
 }
 
 // === View 2: Sweet-spot value finder =======================================
-function sweetRows() {
-  const today = localToday(); // align cpp denominator with the future dates enrich-fares prices
-  const byTriple = new Map();
-  for (const { rec, q } of filtered()) {
-    if (rec.date < today) continue;
-    for (const c of q) {
-      const k = `${rec.origin}-${rec.destination}-${c.cabin}`;
-      let row = byTriple.get(k);
-      if (!row) { row = { origin: rec.origin, destination: rec.destination, cabin: c.cabin, region: `${rec.originRegion}→${rec.destinationRegion}`,
-        regionKey: `${rec.originRegion}|${rec.destinationRegion}|${c.cabin}`, distance: rec.distance, miles: Infinity, seats: 0, direct: false, airlines: "" };
-        byTriple.set(k, row); }
-      if (c.miles < row.miles) { row.miles = c.miles; row.seats = c.seats; row.direct = c.direct; row.airlines = c.airlines; }
-      if (rec.distance && !row.distance) row.distance = rec.distance;
-    }
-  }
-  const rows = [...byTriple.values()];
-  for (const r of rows) {
-    r.mpm = r.distance > 0 ? r.miles / r.distance * 1000 : null;
-    r.fareKey = `${r.origin}-${r.destination}-${r.cabin}`;
-    const auto = (DATA.cashFares || {})[r.fareKey];   // auto fare from enrich-fares.mjs
-    const fare = cashFares[r.fareKey] ?? auto;          // manual entry overrides auto
-    r.fareValue = fare ?? null;
-    r.fareAuto = cashFares[r.fareKey] == null && auto != null;
-    r.cpp = fare > 0 && r.miles > 0 ? fare * 100 / r.miles : null; // cents per point
-    r.estValue = settings.pointValue > 0 ? r.miles * settings.pointValue / 100 : null; // $ value at your valuation
-    r.beatsValuation = r.cpp != null && settings.pointValue > 0 ? r.cpp >= settings.pointValue : null;
-  }
-  // Sweet spot = in the cheapest ~25% of points-per-mile for its region pair + cabin.
-  // Thin groups (< MIN_GROUP routes) are never flagged — a quantile would be meaningless.
-  const MIN_GROUP = 5, QUANTILE = 0.25;
-  const groups = {};
-  for (const r of rows) if (r.mpm != null) (groups[r.regionKey] ||= []).push(r.mpm);
-  const cutoff = {};
-  for (const k in groups) {
-    const a = groups[k].sort((x, y) => x - y);
-    cutoff[k] = a.length < MIN_GROUP ? -Infinity : a[Math.max(0, Math.ceil(a.length * QUANTILE) - 1)];
-  }
-  for (const r of rows) r.sweet = r.mpm != null && r.mpm <= cutoff[r.regionKey];
-  return rows;
-}
+const sweetRows = () => Explore.sweetRows(RECORDS, settings,
+  { autoFares: DATA.cashFares || {}, manualFares: cashFares, today: localToday() });
 function renderSweet() {
   const rows = sweetRows();
   const sortBy = settings.sortSweet;
@@ -776,21 +694,8 @@ function renderAfford() {
   }
   const bal = settings.balance;
   const mult = tripMult(); // 1 = one-way, 2 = round trip (≈2× one-way points)
-  // Per-cabin reachable destinations (cheapest per origin-dest-cabin within balance)
-  const reach = { Y:new Set(), W:new Set(), J:new Set(), F:new Set() };
-  const anyDest = new Set();
-  const list = [];
-  const seen = new Map();
-  for (const { rec, q } of filtered()) {
-    for (const c of q) {
-      if (c.miles * mult > bal) continue;
-      reach[c.cabin].add(rec.destination); anyDest.add(rec.destination);
-      const k = `${rec.origin}-${rec.destination}-${c.cabin}`;
-      const prev = seen.get(k);
-      if (!prev) { const row = { origin: rec.origin, destination: rec.destination, cabin: c.cabin, miles: c.miles, dates: new Set([rec.date]), direct: c.direct, distance: rec.distance }; seen.set(k, row); list.push(row); }
-      else { prev.dates.add(rec.date); if (c.miles < prev.miles) { prev.miles = c.miles; prev.direct = c.direct; } }
-    }
-  }
+  // Reachable destinations + cheapest option per origin-dest-cabin within balance.
+  const { reach, anyDest, list } = Explore.affordRows(RECORDS, settings);
   cont.innerHTML =
     card(fmt(bal), "points balance") +
     card(anyDest.size, "destinations (" + TL() + ")") +
