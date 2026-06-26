@@ -103,6 +103,7 @@ Edit the `CONFIG` block at the top of `ingest.mjs`:
 | `startDate` / `endDate` | today → +90 days | Departure date window (`YYYY-MM-DD`). |
 | `originRegions` | `["North America"]` | `[]` = pull every region (uses more quota). |
 | `destinationRegion` | `null` | Restrict destinations to one region, or all. |
+| `pullReturns` | `false` | Also pull return legs (dest→home) so the **Round trips** tab can pair them. Adds a reverse pass per origin region — roughly 2× quota. |
 | `take` | `1000` | Page size (10–1000). Bigger = fewer API calls. |
 | `quotaFloor` | `25` | Stop early if remaining daily calls drops this low. |
 | `onlyKeepAvailable` | `true` | Drop records with no bookable cabin. |
@@ -114,7 +115,7 @@ remaining-calls header, prints it as it goes, and stops before draining it.
 
 ---
 
-## The four views
+## The five views
 
 1. **Destination discovery** — from your home airport(s), every place you can go, cheapest
    points per cabin, # of available dates, nonstop flag. Table or an offline map. Click any
@@ -131,9 +132,13 @@ remaining-calls header, prints it as it goes, and stops before draining it.
    per cabin and a list of everything you can afford today, each with its **Taxes** (the cash
    you still pay on top — points can't cover it). Points are one-way; a round trip needs
    roughly double the points plus taxes.
+5. **Round trips** — pair a real outbound (home→dest) award with the cheapest-points return
+   (dest→home) within a trip-length window you set (min/max nights), showing combined points,
+   combined taxes, and tax-honest round-trip ¢/pt — not the ≈2× estimate. Needs return-leg data
+   in the cache (`pullReturns` above); if it's missing, the tab tells you how to pull it.
 
 Filters at the top (home airports, cabins, dates, seats, max points, balance, point value,
-direct-only, **round trip**, within-balance) apply to all four views and are remembered
+direct-only, **round trip**, within-balance) apply to all five views and are remembered
 between visits. Tick **Round trip (≈2×)** to make every affordability check and the "what
 can I book" view compare against roughly double the one-way points (Aeroplan prices each
 direction separately, so it's an estimate — confirm both legs).
@@ -144,10 +149,10 @@ direction separately, so it's an estimate — confirm both legs).
 
 - **Read-only.** This never books anything. When you find something, go book it on
   aircanada.com.
-- **One-way availability.** Every view shows directional origin→destination award space for
-  a single departure date. To check a round trip, run the destination as a separate origin
-  (or swap Origin/Destination in the date grid, if both directions were pulled) and verify
-  the return leg yourself — the tool does not pair outbound and return.
+- **Round trips need both directions.** Views 1–4 show directional origin→destination award
+  space for a single date. The **Round trips** tab pairs outbound + return for you, but only
+  when the cache holds the return legs — ingest with `pullReturns: true` (or `originRegions:
+  []`). Aeroplan prices each direction separately at booking, so confirm both legs.
 - **Seat counts are a snapshot.** A cabin shows as available when seats.aero reported it
   bookable at last ingest; remaining-seat numbers are point-in-time and can be stale. Use
   the **Min seats** filter to require a minimum.

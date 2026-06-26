@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import Explore from "../lib/explore.js"; // CommonJS default import -> the Explore namespace
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const { filtered, qualifyingCabins, discoverRows, sweetRows, affordRows } = Explore;
+const { filtered, qualifyingCabins, discoverRows, sweetRows, affordRows, roundTripRows } = Explore;
 
 // --- fixture helpers ---------------------------------------------------------
 function cab(miles, { available = miles > 0, seats = 9, direct = false, airlines = "AC", taxes } = {}) {
@@ -168,6 +168,54 @@ test("affordRows surfaces award taxes (dollars) for the cheapest option", () => 
   assert.equal(list[0].miles, 58000);
   assert.equal(list[0].taxes, 86.5); // taxes of the cheapest (58k) option
   assert.equal(list[0].taxesCurrency, "CAD");
+});
+
+// --- roundTripRows -----------------------------------------------------------
+const RET = { oRegion: "Asia", dRegion: "North America" }; // a return leg's regions
+
+test("roundTripRows pairs outbound with the cheapest in-window return, summing points + taxes", () => {
+  const recs = [
+    rec("YVR", "NRT", "2026-07-01", { J: cab(60000, { taxes: 13000 }) }, { taxesCurrency: "CAD", distance: 4685 }),
+    rec("NRT", "YVR", "2026-07-08", { J: cab(62000, { taxes: 9000 }) }, { ...RET, taxesCurrency: "CAD" }),
+    rec("NRT", "YVR", "2026-07-10", { J: cab(55000, { taxes: 9500 }) }, { ...RET, taxesCurrency: "CAD" }),
+  ];
+  const { rows, hasReturnData } = roundTripRows(recs, S(), { origin: "YVR", dest: "NRT", cabin: "J", minNights: 3, maxNights: 21, today: "2026-06-01" });
+  assert.equal(hasReturnData, true);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].dateRet, "2026-07-10"); // 55k beats 62k even though it's later
+  assert.equal(rows[0].nights, 9);
+  assert.equal(rows[0].totalMiles, 115000);
+  assert.equal(rows[0].totalTaxes, 225);       // (13000 + 9500) / 100
+});
+
+test("roundTripRows respects the trip-length window", () => {
+  const recs = [
+    rec("YVR", "NRT", "2026-07-01", { J: cab(60000) }, { distance: 4685 }),
+    rec("NRT", "YVR", "2026-07-02", { J: cab(55000) }, RET), // 1 night — too short
+  ];
+  const { rows } = roundTripRows(recs, S(), { origin: "YVR", dest: "NRT", cabin: "J", minNights: 3, maxNights: 21, today: "2026-06-01" });
+  assert.equal(rows.length, 0);
+});
+
+test("roundTripRows computes round-trip cpp from both directional fares", () => {
+  const recs = [
+    rec("YVR", "NRT", "2026-07-01", { J: cab(60000, { taxes: 13000 }) }, { taxesCurrency: "CAD", distance: 4685 }),
+    rec("NRT", "YVR", "2026-07-09", { J: cab(60000, { taxes: 9000 }) }, { ...RET, taxesCurrency: "CAD" }),
+  ];
+  const { rows } = roundTripRows(recs, S(), { origin: "YVR", dest: "NRT", cabin: "J", minNights: 3, maxNights: 21, today: "2026-06-01",
+    autoFares: { "YVR-NRT-J": 3200, "NRT-YVR-J": 3000 }, faresCurrency: "CAD" });
+  assert.equal(rows[0].rtFare, 6200);
+  assert.equal(rows[0].totalTaxes, 220);                       // (13000 + 9000) / 100
+  assert.equal(rows[0].cppIsNet, true);
+  assert.equal(rows[0].cpp, ((6200 - 220) * 100) / 120000);    // net round-trip cpp
+});
+
+test("roundTripRows flags missing return data so the UI can prompt a returns pull", () => {
+  const recs = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000) }, { distance: 4685 })]; // outbound only
+  const res = roundTripRows(recs, S(), { origin: "YVR", dest: "NRT", cabin: "J", minNights: 3, maxNights: 21, today: "2026-06-01" });
+  assert.equal(res.hasOutboundData, true);
+  assert.equal(res.hasReturnData, false);
+  assert.equal(res.rows.length, 0);
 });
 
 // --- integration over the committed sample ----------------------------------
