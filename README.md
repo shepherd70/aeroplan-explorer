@@ -39,12 +39,14 @@ you only fix the ingester.
    availability for the **next 90 days**.
 
 4. **Explore.** Open `index.html` in Chrome or Edge, click **“Open cache file…”**, and
-   pick `aeroplan-cache.json`. The app remembers which file you picked — after re-running
-   the ingester, hit **↻ Reload**. Chrome/Edge may re-prompt for read permission once per
-   session, then it re-reads the cache.
+   pick `aeroplan-cache.json` (or the bundled `sample-cache.json` to look around before you
+   ingest). The app remembers which file you picked — after re-running the ingester, hit
+   **↻ Reload**. Chrome/Edge may re-prompt for read permission once per session, then it
+   re-reads the cache.
 
-> A small sample `aeroplan-cache.json` ships with the repo so you can click around before
-> you run the ingester. Your first `node ingest.mjs` overwrites it with real data.
+> A small sample `sample-cache.json` ships with the repo — open it to click around before
+> you run the ingester. `node ingest.mjs` writes the **live** `aeroplan-cache.json`
+> (gitignored); open that once you have it. (Regenerate the sample with `node make-sample.mjs`.)
 
 ---
 
