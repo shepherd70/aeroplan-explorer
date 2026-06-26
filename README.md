@@ -74,6 +74,14 @@ In the explorer, auto fares show as italic blue in the **Cash $** column and dri
 override any cell; clear it to revert to the auto fare. Re-running `node ingest.mjs` keeps
 your fares; re-run `enrich-fares.mjs` to refresh them.
 
+**¢/pt is tax-honest.** Redeeming still costs the award's cash taxes & carrier surcharges
+out of pocket, so the points only "buy" *(cash fare − award taxes)*. The Sweet-spot finder
+shows those taxes in their own **Taxes** column — pulled straight from seats.aero per cabin,
+no extra API calls — and nets them out of ¢/pt whenever the fare and tax share a currency
+(hover a ¢/pt cell to see the basis). If the currencies differ, ¢/pt falls back to gross.
+Taxes appear only after an ingest that captured them, so re-run `node ingest.mjs` if your
+**Taxes** column is empty.
+
 Notes: the free **test** host (`test.api.amadeus.com`) has limited/cached data, so some
 routes return no fare — set `AMADEUS_HOSTNAME=api.amadeus.com` in `.env` for full coverage
 (paid past a monthly free quota). Default currency is CAD (edit `CONFIG.currency` in
@@ -113,14 +121,16 @@ remaining-calls header, prints it as it goes, and stops before draining it.
    destination to jump to its date grid.
 2. **Sweet-spot value finder** — ranks routes by points-per-1000-miles and flags the
    cheapest ~25% within each region-pair + cabin as "sweet spots" (thin groups of <5
-   routes aren't flagged). Paste a cash fare on any row to get true ¢-per-point. Set a
-   **Point value ¢** in the filters to see each award's estimated $ value and flag fares
-   that beat your valuation (the ¢/pt cell turns green).
+   routes aren't flagged). A **Taxes** column shows the award's cash taxes & surcharges, and
+   pasting a cash fare on any row gives true, tax-honest ¢-per-point. Set a **Point value ¢**
+   in the filters to see each award's estimated $ value and flag fares that beat your
+   valuation (the ¢/pt cell turns green).
 3. **Flexible date grid** — pick a route, see a month-by-month calendar heatmap of points
    cost and seats. The fix for "I don't have fixed dates."
 4. **What can I book now?** — enter your balance; see destinations reachable **one-way**
-   per cabin and a list of everything you can afford today. (Points are one-way and exclude
-   cash taxes/surcharges — a round trip needs roughly double the points plus taxes.)
+   per cabin and a list of everything you can afford today, each with its **Taxes** (the cash
+   you still pay on top — points can't cover it). Points are one-way; a round trip needs
+   roughly double the points plus taxes.
 
 Filters at the top (home airports, cabins, dates, seats, max points, balance, point value,
 direct-only, **round trip**, within-balance) apply to all four views and are remembered
