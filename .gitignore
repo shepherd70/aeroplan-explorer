@@ -1,0 +1,11 @@
+# Secrets — never commit your API key
+.env
+
+# Local data cache (can be large; regenerate with `node ingest.mjs`)
+aeroplan-cache.json
+*.cache.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+node_modules/

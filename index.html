@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Aeroplan Award Explorer</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #171d25; --panel2: #1e2630; --line: #2a3340;
+    --text: #e6edf3; --muted: #9aa7b4; --accent: #38bdf8; --accent2: #f5a524;
+    --good: #22c55e; --warn: #f59e0b; --bad: #ef4444; --chip: #243040;
+    --shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  a { color: var(--accent); }
+  header.app {
+    display: flex; align-items: center; gap: 16px; padding: 12px 18px;
+    background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30;
+  }
+  header.app h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+  header.app .grow { flex: 1; }
+  .pill { font-size: 12px; color: var(--muted); background: var(--chip); padding: 4px 10px; border-radius: 999px; }
+  .pill.warn { color: #1a1205; background: var(--warn); }
+  button, .btn {
+    font: inherit; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #04222e; border-color: var(--accent); font-weight: 600; }
+
+  /* Filter bar */
+  .filters {
+    display: flex; flex-wrap: wrap; gap: 14px 20px; align-items: flex-end;
+    padding: 12px 18px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 49px; z-index: 20;
+  }
+  .field { display: flex; flex-direction: column; gap: 3px; }
+  .field label { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+  .field input[type=text], .field input[type=number], .field input[type=date], .field select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 8px; font: inherit;
+  }
+  .field input[type=number] { width: 96px; }
+  .field input[type=text] { width: 150px; }
+  .cabins { display: flex; gap: 10px; }
+  .cabins label { display: flex; align-items: center; gap: 4px; font-size: 12px; text-transform: none; letter-spacing: 0; color: var(--text); cursor: pointer; }
+  .checkline { display: flex; align-items: center; gap: 6px; }
+
+  /* Tabs */
+  nav.tabs { display: flex; gap: 4px; padding: 0 18px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 49px; z-index: 10; }
+  nav.tabs.with-filters { top: 132px; }
+  nav.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 11px 14px; }
+  nav.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+
+  main { padding: 18px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* Tables */
+  .tablewrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px; max-height: calc(100vh - 230px); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 7px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+  th:first-child, td:first-child, th.l, td.l { text-align: left; }
+  thead th {
+    position: sticky; top: 0; background: var(--panel2); cursor: pointer; user-select: none;
+    font-weight: 600; color: var(--muted); z-index: 1;
+  }
+  thead th.sorted { color: var(--accent); }
+  tbody tr:hover { background: rgba(56,189,248,.07); }
+  tbody tr.clickable { cursor: pointer; }
+  td.miles { font-variant-numeric: tabular-nums; }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+  .badge.sweet { background: var(--good); color: #05210f; font-weight: 600; }
+  .badge.direct { background: #1e3a5f; color: var(--accent); }
+  .badge.afford { background: var(--accent2); color: #2a1a02; font-weight: 600; }
+  .muted { color: var(--muted); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* Cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card .big { font-size: 26px; font-weight: 700; }
+  .card .lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+  /* Map */
+  .maptoggle { display: flex; gap: 8px; margin-bottom: 12px; }
+  #mapwrap { position: relative; border: 1px solid var(--line); border-radius: 10px; background: #0b1016; overflow: hidden; }
+  #mapwrap svg { display: block; width: 100%; height: auto; }
+  .grat { stroke: #1c2530; stroke-width: .5; }
+  .grat0 { stroke: #2c3a4a; stroke-width: .8; }
+  .reglabel { fill: #3a4757; font-size: 7px; }
+  .route { stroke: var(--accent); stroke-width: .5; opacity: .35; fill: none; }
+  .dot-home { fill: var(--accent); stroke: #04222e; stroke-width: 1; }
+  .dot-dest { stroke: rgba(0,0,0,.4); stroke-width: .5; cursor: pointer; }
+  #maptip { position: absolute; pointer-events: none; background: #04222e; color: #e6edf3; border: 1px solid var(--accent);
+    border-radius: 6px; padding: 6px 9px; font-size: 12px; display: none; z-index: 5; box-shadow: var(--shadow); }
+
+  /* Date grid */
+  .months { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
+  .month h4 { margin: 0 0 6px; font-size: 13px; }
+  .cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .cal .dow { font-size: 10px; color: var(--muted); text-align: center; }
+  .cell { aspect-ratio: 1; border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-size: 10px; background: var(--panel2); color: var(--muted); position: relative; }
+  .cell.has { color: #04140a; font-weight: 600; cursor: default; }
+  .cell .d { font-size: 9px; opacity: .8; position: absolute; top: 1px; left: 3px; }
+  .cell .m { font-size: 10px; }
+  .cell.empty { opacity: .35; }
+
+  .empty-state { text-align: center; padding: 70px 20px; color: var(--muted); }
+  .empty-state h2 { color: var(--text); }
+  .empty-state code { background: var(--chip); padding: 2px 6px; border-radius: 4px; color: var(--accent2); }
+  .controls-row { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 14px; }
+  .hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+  .legend { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--muted); margin: 8px 0; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; margin-right: 4px; }
+  .fareinp { width: 80px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; font: inherit; }
+  .fareinp.auto { color: var(--accent); border-color: #2a4a5a; font-style: italic; }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <h1>✈ Aeroplan Award Explorer</h1>
+  <span id="freshness" class="pill">No data loaded</span>
+  <div class="grow"></div>
+  <button id="openBtn" class="primary">Open cache file…</button>
+  <button id="reloadBtn" title="Re-read the cache file">↻ Reload</button>
+</header>
+
+<div id="appBody" style="display:none">
+  <div class="filters" id="filters">
+    <div class="field">
+      <label>Home airport(s)</label>
+      <input type="text" id="fHome" placeholder="YYZ, YUL…" list="originList" />
+      <datalist id="originList"></datalist>
+    </div>
+    <div class="field">
+      <label>Cabins</label>
+      <div class="cabins" id="fCabins">
+        <label><input type="checkbox" value="Y" checked> Eco</label>
+        <label><input type="checkbox" value="W" checked> Prem</label>
+        <label><input type="checkbox" value="J" checked> Business</label>
+        <label><input type="checkbox" value="F" checked> First</label>
+      </div>
+    </div>
+    <div class="field"><label>From date</label><input type="date" id="fStart"></div>
+    <div class="field"><label>To date</label><input type="date" id="fEnd"></div>
+    <div class="field"><label>Min seats</label><input type="number" id="fSeats" min="0" value="0"></div>
+    <div class="field"><label>Max points</label><input type="number" id="fMaxMiles" min="0" step="1000" placeholder="any"></div>
+    <div class="field"><label>Points balance</label><input type="number" id="fBalance" min="0" step="1000" placeholder="e.g. 120000"></div>
+    <div class="field"><label>Point value ¢</label><input type="number" id="fPointValue" min="0" step="0.1" placeholder="e.g. 1.5"></div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <div class="checkline">
+        <label class="checkline"><input type="checkbox" id="fDirect"> Direct only</label>
+        <label class="checkline"><input type="checkbox" id="fRoundTrip"> Round trip (≈2×)</label>
+        <label class="checkline"><input type="checkbox" id="fAfford"> Within balance</label>
+      </div>
+    </div>
+  </div>
+
+  <nav class="tabs with-filters" id="tabs">
+    <button data-tab="discover" class="active">Destination discovery</button>
+    <button data-tab="sweet">Sweet-spot value finder</button>
+    <button data-tab="grid">Flexible date grid</button>
+    <button data-tab="afford">What can I book now?</button>
+  </nav>
+
+  <main>
+    <section class="view active" id="view-discover">
+      <div class="maptoggle">
+        <button id="showTable" class="primary">Table</button>
+        <button id="showMap">Map</button>
+        <span class="grow"></span>
+        <span class="hint" id="discoverCount"></span>
+      </div>
+      <div id="discoverTable"></div>
+      <div id="discoverMap" style="display:none">
+        <div class="legend" id="mapLegend"></div>
+        <div id="mapwrap"><div id="maptip"></div></div>
+      </div>
+    </section>
+
+    <section class="view" id="view-sweet">
+      <div class="controls-row">
+        <div class="field">
+          <label>Sort by</label>
+          <select id="sweetSort">
+            <option value="mpm">Best value (points / 1000 mi)</option>
+            <option value="cpp">Best value (¢ per point, needs cash $)</option>
+            <option value="miles">Fewest points</option>
+            <option value="distance">Longest distance</option>
+          </select>
+        </div>
+        <p class="hint">“Sweet spot” = in the cheapest ~25% of points-per-mile for that region pair &amp; cabin (groups with &lt;5 routes aren’t flagged). Add a cash fare ($) for true cents-per-point; set <b>Point value ¢</b> in the filters to see each award’s estimated $ value and flag fares that beat your valuation (green ¢/pt).</p>
+      </div>
+      <div id="sweetTable"></div>
+    </section>
+
+    <section class="view" id="view-grid">
+      <div class="controls-row">
+        <div class="field"><label>Origin</label><select id="gOrigin"></select></div>
+        <div class="field"><label>Destination</label><select id="gDest"></select></div>
+        <div class="field"><label>Cabin</label><select id="gCabin"></select></div>
+        <span class="hint" id="gridInfo"></span>
+      </div>
+      <div class="legend" id="gridLegend"></div>
+      <div class="months" id="gridMonths"></div>
+    </section>
+
+    <section class="view" id="view-afford">
+      <div id="affordCards" class="cards"></div>
+      <div id="affordTable"></div>
+    </section>
+  </main>
+</div>
+
+<div id="emptyState" class="empty-state">
+  <h2>No data loaded yet</h2>
+  <p>Run the ingester to fetch Aeroplan availability, then open the cache file here.</p>
+  <p>1. Put your key in <code>.env</code> &nbsp; 2. <code>node ingest.mjs</code> &nbsp; 3. open <code>aeroplan-cache.json</code></p>
+  <p style="margin-top:20px"><button class="primary" id="openBtn2">Open aeroplan-cache.json…</button></p>
+</div>
+
+<input type="file" id="fileFallback" accept=".json,application/json" style="display:none" />
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Curated airport coordinates for the offline map (IATA -> [lat, lon, name]).
+// Airports not listed here still appear in all tables; they're just not plotted.
+// ---------------------------------------------------------------------------
+const AIRPORTS = {
+  YYZ:[43.68,-79.63,"Toronto"],YUL:[45.47,-73.74,"Montréal"],YVR:[49.19,-123.18,"Vancouver"],
+  YYC:[51.11,-114.02,"Calgary"],YEG:[53.31,-113.58,"Edmonton"],YOW:[45.32,-75.67,"Ottawa"],
+  YWG:[49.91,-97.24,"Winnipeg"],YHZ:[44.88,-63.51,"Halifax"],
+  JFK:[40.64,-73.78,"New York JFK"],EWR:[40.69,-74.17,"Newark"],LGA:[40.78,-73.87,"New York LGA"],
+  LAX:[33.94,-118.41,"Los Angeles"],SFO:[37.62,-122.38,"San Francisco"],ORD:[41.98,-87.90,"Chicago"],
+  DFW:[32.90,-97.04,"Dallas"],MIA:[25.79,-80.29,"Miami"],SEA:[47.45,-122.31,"Seattle"],
+  BOS:[42.36,-71.01,"Boston"],IAD:[38.95,-77.46,"Washington"],ATL:[33.64,-84.43,"Atlanta"],
+  DEN:[39.86,-104.67,"Denver"],LAS:[36.08,-115.15,"Las Vegas"],PHX:[33.43,-112.01,"Phoenix"],
+  IAH:[29.98,-95.34,"Houston"],HNL:[21.32,-157.92,"Honolulu"],
+  MEX:[19.44,-99.07,"Mexico City"],CUN:[21.04,-86.87,"Cancún"],PTY:[9.07,-79.38,"Panama City"],
+  SJO:[9.99,-84.21,"San José CR"],NAS:[25.04,-77.46,"Nassau"],MBJ:[18.50,-77.91,"Montego Bay"],
+  HAV:[22.99,-82.41,"Havana"],
+  GRU:[-23.43,-46.47,"São Paulo"],GIG:[-22.81,-43.25,"Rio de Janeiro"],EZE:[-34.82,-58.54,"Buenos Aires"],
+  SCL:[-33.39,-70.79,"Santiago"],LIM:[-12.02,-77.11,"Lima"],BOG:[4.70,-74.15,"Bogotá"],
+  LHR:[51.47,-0.45,"London Heathrow"],LGW:[51.15,-0.19,"London Gatwick"],CDG:[49.01,2.55,"Paris CDG"],
+  FRA:[50.04,8.56,"Frankfurt"],MUC:[48.35,11.79,"Munich"],AMS:[52.31,4.76,"Amsterdam"],
+  MAD:[40.47,-3.56,"Madrid"],BCN:[41.30,2.08,"Barcelona"],FCO:[41.80,12.25,"Rome"],
+  ZRH:[47.46,8.55,"Zürich"],GVA:[46.24,6.11,"Geneva"],VIE:[48.11,16.57,"Vienna"],
+  CPH:[55.62,12.65,"Copenhagen"],ARN:[59.65,17.92,"Stockholm"],OSL:[60.19,11.10,"Oslo"],
+  HEL:[60.32,24.96,"Helsinki"],DUB:[53.43,-6.27,"Dublin"],LIS:[38.77,-9.13,"Lisbon"],
+  IST:[41.28,28.74,"Istanbul"],ATH:[37.94,23.95,"Athens"],BRU:[50.90,4.48,"Brussels"],
+  MXP:[45.63,8.72,"Milan"],PRG:[50.10,14.26,"Prague"],WAW:[52.17,20.97,"Warsaw"],
+  DXB:[25.25,55.36,"Dubai"],AUH:[24.43,54.65,"Abu Dhabi"],DOH:[25.27,51.61,"Doha"],
+  TLV:[32.01,34.89,"Tel Aviv"],CAI:[30.11,31.41,"Cairo"],JNB:[-26.13,28.24,"Johannesburg"],
+  CPT:[-33.97,18.60,"Cape Town"],NBO:[-1.32,36.93,"Nairobi"],ADD:[8.98,38.80,"Addis Ababa"],
+  CMN:[33.37,-7.59,"Casablanca"],
+  NRT:[35.77,140.39,"Tokyo Narita"],HND:[35.55,139.78,"Tokyo Haneda"],ICN:[37.46,126.44,"Seoul"],
+  PEK:[40.08,116.58,"Beijing"],PVG:[31.14,121.81,"Shanghai"],HKG:[22.31,113.91,"Hong Kong"],
+  TPE:[25.08,121.23,"Taipei"],BKK:[13.69,100.75,"Bangkok"],SIN:[1.36,103.99,"Singapore"],
+  KUL:[2.74,101.71,"Kuala Lumpur"],DEL:[28.56,77.10,"Delhi"],BOM:[19.09,72.87,"Mumbai"],
+  MNL:[14.51,121.02,"Manila"],CGK:[-6.13,106.66,"Jakarta"],SGN:[10.82,106.65,"Ho Chi Minh"],
+  HAN:[21.22,105.81,"Hanoi"],
+  SYD:[-33.95,151.18,"Sydney"],MEL:[-37.67,144.84,"Melbourne"],BNE:[-27.38,153.12,"Brisbane"],
+  AKL:[-37.01,174.79,"Auckland"],PER:[-31.94,115.97,"Perth"],NAN:[-17.75,177.45,"Nadi"],
+  // --- additional coverage ---
+  YQB:[46.79,-71.39,"Québec City"],YYT:[47.62,-52.75,"St. John's"],YXE:[52.17,-106.70,"Saskatoon"],
+  YQR:[50.43,-104.67,"Regina"],YLW:[49.96,-119.38,"Kelowna"],YYJ:[48.65,-123.43,"Victoria"],
+  YQM:[46.11,-64.68,"Moncton"],
+  SAN:[32.73,-117.19,"San Diego"],SLC:[40.79,-111.98,"Salt Lake City"],MSP:[44.88,-93.22,"Minneapolis"],
+  DTW:[42.21,-83.35,"Detroit"],PHL:[39.87,-75.24,"Philadelphia"],CLT:[35.21,-80.94,"Charlotte"],
+  FLL:[26.07,-80.15,"Fort Lauderdale"],MCO:[28.43,-81.31,"Orlando"],TPA:[27.98,-82.53,"Tampa"],
+  AUS:[30.19,-97.67,"Austin"],BNA:[36.12,-86.68,"Nashville"],PDX:[45.59,-122.60,"Portland"],
+  RDU:[35.88,-78.79,"Raleigh"],SJC:[37.36,-121.93,"San Jose"],DCA:[38.85,-77.04,"Washington Nat'l"],
+  BWI:[39.18,-76.67,"Baltimore"],STL:[38.75,-90.37,"St. Louis"],PIT:[40.49,-80.23,"Pittsburgh"],
+  MCI:[39.30,-94.71,"Kansas City"],IND:[39.72,-86.29,"Indianapolis"],CLE:[41.41,-81.85,"Cleveland"],
+  ANC:[61.17,-149.99,"Anchorage"],OGG:[20.90,-156.43,"Maui"],KOA:[19.74,-156.05,"Kona"],
+  SAT:[29.53,-98.47,"San Antonio"],ABQ:[35.04,-106.61,"Albuquerque"],BUF:[42.94,-78.73,"Buffalo"],
+  SJU:[18.44,-66.00,"San Juan"],PUJ:[18.57,-68.36,"Punta Cana"],SDQ:[18.43,-69.67,"Santo Domingo"],
+  KIN:[17.94,-76.79,"Kingston"],AUA:[12.50,-70.01,"Aruba"],CUR:[12.19,-68.96,"Curaçao"],
+  SXM:[18.04,-63.11,"St. Maarten"],LIR:[10.59,-85.54,"Liberia CR"],GUA:[14.58,-90.53,"Guatemala City"],
+  SJD:[23.15,-109.72,"Los Cabos"],PVR:[20.68,-105.25,"Puerto Vallarta"],GDL:[20.52,-103.31,"Guadalajara"],
+  MTY:[25.78,-100.11,"Monterrey"],UIO:[-0.13,-78.36,"Quito"],GYE:[-2.16,-79.88,"Guayaquil"],
+  MVD:[-34.84,-56.03,"Montevideo"],ASU:[-25.24,-57.52,"Asunción"],BSB:[-15.87,-47.92,"Brasília"],
+  POA:[-29.99,-51.17,"Porto Alegre"],FOR:[-3.78,-38.53,"Fortaleza"],REC:[-8.13,-34.92,"Recife"],
+  MDE:[6.16,-75.42,"Medellín"],CTG:[10.44,-75.51,"Cartagena"],
+  MAN:[53.35,-2.27,"Manchester"],EDI:[55.95,-3.37,"Edinburgh"],GLA:[55.87,-4.43,"Glasgow"],
+  BHX:[52.45,-1.75,"Birmingham"],DUS:[51.28,6.76,"Düsseldorf"],HAM:[53.63,10.00,"Hamburg"],
+  STR:[48.69,9.22,"Stuttgart"],CGN:[50.87,7.14,"Cologne"],BER:[52.36,13.50,"Berlin"],
+  GOT:[57.66,12.28,"Gothenburg"],KEF:[63.99,-22.61,"Reykjavík"],OPO:[41.24,-8.68,"Porto"],
+  AGP:[36.68,-4.50,"Málaga"],PMI:[39.55,2.74,"Palma"],VLC:[39.49,-0.48,"Valencia"],
+  NCE:[43.66,7.21,"Nice"],LYS:[45.73,5.08,"Lyon"],MRS:[43.44,5.21,"Marseille"],
+  TLS:[43.63,1.37,"Toulouse"],NAP:[40.89,14.29,"Naples"],VCE:[45.51,12.35,"Venice"],
+  BLQ:[44.53,11.30,"Bologna"],BUD:[47.44,19.26,"Budapest"],OTP:[44.57,26.10,"Bucharest"],
+  BEG:[44.82,20.31,"Belgrade"],ZAG:[45.74,16.07,"Zagreb"],KRK:[50.08,19.78,"Kraków"],
+  RIX:[56.92,23.97,"Riga"],TLL:[59.41,24.83,"Tallinn"],VNO:[54.64,25.28,"Vilnius"],
+  KBP:[50.34,30.89,"Kyiv"],SVO:[55.97,37.41,"Moscow"],TBS:[41.67,44.95,"Tbilisi"],
+  EVN:[40.15,44.40,"Yerevan"],GYD:[40.47,50.05,"Baku"],
+  RUH:[24.96,46.70,"Riyadh"],JED:[21.68,39.16,"Jeddah"],KWI:[29.23,47.97,"Kuwait"],
+  BAH:[26.27,50.63,"Bahrain"],MCT:[23.59,58.28,"Muscat"],AMM:[31.72,35.99,"Amman"],
+  BEY:[33.82,35.49,"Beirut"],LCA:[34.88,33.63,"Larnaca"],RAK:[31.61,-8.04,"Marrakesh"],
+  TUN:[36.85,10.23,"Tunis"],ALG:[36.69,3.22,"Algiers"],LOS:[6.58,3.32,"Lagos"],
+  ABV:[9.01,7.26,"Abuja"],ACC:[5.61,-0.17,"Accra"],DKR:[14.67,-17.07,"Dakar"],
+  DAR:[-6.87,39.20,"Dar es Salaam"],EBB:[0.04,32.44,"Entebbe"],KGL:[-1.97,30.13,"Kigali"],
+  MRU:[-20.43,57.68,"Mauritius"],SEZ:[-4.67,55.52,"Seychelles"],DUR:[-29.61,31.12,"Durban"],
+  KIX:[34.43,135.24,"Osaka Kansai"],NGO:[34.86,136.81,"Nagoya"],FUK:[33.59,130.45,"Fukuoka"],
+  CTS:[42.78,141.69,"Sapporo"],GMP:[37.56,126.80,"Seoul Gimpo"],CAN:[23.39,113.31,"Guangzhou"],
+  SZX:[22.64,113.81,"Shenzhen"],CTU:[30.58,103.95,"Chengdu"],CKG:[29.72,106.64,"Chongqing"],
+  XIY:[34.44,108.76,"Xi'an"],HGH:[30.23,120.43,"Hangzhou"],KMG:[25.10,102.93,"Kunming"],
+  CEB:[10.31,123.98,"Cebu"],DPS:[-8.75,115.17,"Bali"],SUB:[-7.38,112.79,"Surabaya"],
+  PEN:[5.30,100.27,"Penang"],HKT:[8.11,98.31,"Phuket"],RGN:[16.91,96.13,"Yangon"],
+  PNH:[11.55,104.84,"Phnom Penh"],REP:[13.41,103.81,"Siem Reap"],CMB:[7.18,79.88,"Colombo"],
+  MLE:[4.19,73.53,"Maldives"],DAC:[23.84,90.40,"Dhaka"],KTM:[27.70,85.36,"Kathmandu"],
+  BLR:[13.20,77.71,"Bangalore"],MAA:[12.99,80.17,"Chennai"],HYD:[17.24,78.43,"Hyderabad"],
+  CCU:[22.65,88.45,"Kolkata"],ISB:[33.55,72.83,"Islamabad"],KHI:[24.91,67.16,"Karachi"],
+  LHE:[31.52,74.40,"Lahore"],TAS:[41.26,69.28,"Tashkent"],ALA:[43.35,77.04,"Almaty"],
+  NQZ:[51.02,71.47,"Astana"],ULN:[47.84,106.77,"Ulaanbaatar"],
+  ADL:[-34.95,138.53,"Adelaide"],CNS:[-16.89,145.75,"Cairns"],OOL:[-28.16,153.51,"Gold Coast"],
+  CHC:[-43.49,172.53,"Christchurch"],ZQN:[-45.02,168.74,"Queenstown"],WLG:[-41.33,174.81,"Wellington"],
+  PPT:[-17.56,-149.61,"Tahiti"],GUM:[13.48,144.80,"Guam"],NOU:[-22.01,166.21,"Nouméa"],
+};
+
+const CABINS = ["Y","W","J","F"];
+const CABIN_NAME = { Y:"Economy", W:"Premium", J:"Business", F:"First" };
+
+// --- App state --------------------------------------------------------------
+let DATA = null, RECORDS = [];
+let cashFares = {};            // "ORIG-DEST-CABIN" -> cash $ (for cpp), persisted
+const SETTINGS_KEY = "aeroplan-explorer-settings-v1";
+const FARES_KEY = "aeroplan-explorer-fares-v1";
+let settings = loadSettings();
+let fileHandle = null;
+const sortState = { discover: settings.sortDiscover, afford: settings.sortAfford }; // persisted via settings
+
+// --- IndexedDB (persist the chosen file handle) -----------------------------
+function idb(store) {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open("aeroplan-explorer", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbSet(k, v) { const db = await idb(); return new Promise((res,rej)=>{ const t=db.transaction("kv","readwrite"); t.objectStore("kv").put(v,k); t.oncomplete=res; t.onerror=()=>rej(t.error); }); }
+async function idbGet(k) { const db = await idb(); return new Promise((res,rej)=>{ const t=db.transaction("kv","readonly"); const q=t.objectStore("kv").get(k); q.onsuccess=()=>res(q.result); q.onerror=()=>rej(q.error); }); }
+
+// --- Settings persistence ---------------------------------------------------
+function loadSettings() {
+  const def = { home:[], cabins:["Y","W","J","F"], start:"", end:"", seats:0, maxMiles:0, balance:0, direct:false, afford:false,
+    roundTrip:false, pointValue:0,
+    sortDiscover:{key:"cheapest",dir:1}, sortAfford:{key:"miles",dir:1}, sortSweet:"mpm" };
+  try { return Object.assign(def, JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}")); }
+  catch { return def; }
+}
+function saveSettings() { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
+function loadFares() { try { return JSON.parse(localStorage.getItem(FARES_KEY) || "{}"); } catch { return {}; } }
+function saveFares() { localStorage.setItem(FARES_KEY, JSON.stringify(cashFares)); }
+
+// --- Loading the cache ------------------------------------------------------
+async function openWithPicker() {
+  if (!window.showOpenFilePicker) { document.getElementById("fileFallback").click(); return; }
+  try {
+    const [h] = await window.showOpenFilePicker({
+      types: [{ description: "JSON cache", accept: { "application/json": [".json"] } }],
+    });
+    fileHandle = h;
+    await idbSet("cacheHandle", h);
+    await readHandle();
+  } catch (e) { if (e.name !== "AbortError") alert("Couldn't open file: " + e.message); }
+}
+async function readHandle() {
+  if (!fileHandle) return;
+  const perm = await fileHandle.queryPermission({ mode: "read" });
+  if (perm !== "granted") {
+    const req = await fileHandle.requestPermission({ mode: "read" });
+    if (req !== "granted") { alert("Permission to read the file was denied."); return; }
+  }
+  const file = await fileHandle.getFile();
+  ingestText(await file.text());
+}
+async function restoreHandle() {
+  try {
+    const h = await idbGet("cacheHandle");
+    if (!h) return;
+    fileHandle = h;
+    const perm = await h.queryPermission({ mode: "read" });
+    if (perm === "granted") await readHandle();
+    else setFreshness("Click Reload to reconnect to your cache file", true);
+  } catch {}
+}
+function ingestText(text) {
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { alert("That file isn't valid JSON."); return; }
+  const records = Array.isArray(parsed) ? parsed : parsed.records;
+  if (!Array.isArray(records)) { alert("Unexpected cache format — expected { meta, records } from ingest.mjs."); return; }
+  const src = parsed.meta?.source;
+  if (src && src !== "aeroplan" && !confirm(`This cache's source is "${src}", not "aeroplan". Load it anyway?`)) return;
+  const anyBookable = records.some((r) => r && r.cabins && CABINS.some((X) => r.cabins[X]?.available && r.cabins[X].miles > 0));
+  if (records.length && !anyBookable) alert("Loaded, but no record has a bookable cabin — this may be the wrong file or an empty pull.");
+  DATA = parsed; RECORDS = records;
+  onDataLoaded();
+}
+
+// --- Helpers ----------------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
+const fmt = (n) => n == null || !isFinite(n) ? "—" : Math.round(n).toLocaleString();
+const cabinLabel = (X) => CABIN_NAME[X] || X;
+function colorFor(t) { // t in [0,1], 0=best(green) 1=worst(red)
+  if (t == null || !isFinite(t)) return "transparent";
+  const h = 120 * (1 - Math.max(0, Math.min(1, t)));
+  return `hsl(${h} 65% 42%)`;
+}
+function activeCabins() { return CABINS.filter((X) => settings.cabins.includes(X)); }
+const tripMult = () => settings.roundTrip ? 2 : 1;          // round-trip ≈ 2× one-way points
+const TL = () => settings.roundTrip ? "round trip" : "1-way"; // trip-type label for affordability
+const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+
+// A record's cabins that pass ALL active filters; returns [{cabin, ...cabinData}]
+function qualifyingCabins(rec) {
+  const out = [];
+  for (const X of activeCabins()) {
+    const c = rec.cabins?.[X];
+    if (!c || !c.available || !(c.miles > 0)) continue;
+    if (settings.direct && !c.direct) continue;
+    if (settings.seats > 0 && c.seats < settings.seats) continue;
+    if (settings.maxMiles > 0 && c.miles > settings.maxMiles) continue;
+    if (settings.afford && !(settings.balance > 0 && c.miles * tripMult() <= settings.balance)) continue;
+    out.push({ cabin: X, ...c });
+  }
+  return out;
+}
+function filtered() {
+  const home = settings.home;
+  const s = settings.start, e = settings.end;
+  const out = [];
+  for (const r of RECORDS) {
+    if (home.length && !home.includes(r.origin)) continue;
+    if (s && r.date < s) continue;
+    if (e && r.date > e) continue;
+    const q = qualifyingCabins(r);
+    if (!q.length) continue;
+    out.push({ rec: r, q });
+  }
+  return out;
+}
+
+// --- Render: dispatcher -----------------------------------------------------
+function renderAll() {
+  if (!DATA) return;
+  renderDiscover();
+  renderSweet();
+  renderGridControls();
+  renderGrid();
+  renderAfford();
+}
+
+// === View 1: Destination discovery =========================================
+function discoverRows() {
+  const byDest = new Map();
+  for (const { rec, q } of filtered()) {
+    let d = byDest.get(rec.destination);
+    if (!d) {
+      d = { destination: rec.destination, region: rec.destinationRegion, distance: rec.distance,
+            dates: new Set(), direct: false, cab: { Y:Infinity, W:Infinity, J:Infinity, F:Infinity },
+            bestOrigin: null, bestMiles: Infinity };
+      byDest.set(rec.destination, d);
+    }
+    d.dates.add(rec.date);
+    if (rec.distance && !d.distance) d.distance = rec.distance;
+    for (const c of q) {
+      if (c.miles < d.cab[c.cabin]) d.cab[c.cabin] = c.miles;
+      if (c.miles < d.bestMiles) { d.bestMiles = c.miles; d.bestOrigin = rec.origin; }
+      if (c.direct) d.direct = true;
+    }
+  }
+  const rows = [...byDest.values()].map((d) => {
+    const cheapest = Math.min(...CABINS.map((X) => d.cab[X]));
+    return { ...d, dateCount: d.dates.size, cheapest: isFinite(cheapest) ? cheapest : null };
+  });
+  return rows;
+}
+function renderDiscover() {
+  const rows = discoverRows();
+  $("discoverCount").textContent = rows.length + " destination" + (rows.length === 1 ? "" : "s");
+  const cabs = activeCabins();
+  const { key, dir } = sortState.discover;
+  const val = (r) => key === "destination" ? r.destination : key === "region" ? r.region
+    : key === "distance" ? r.distance : key === "dateCount" ? r.dateCount
+    : key === "cheapest" ? (r.cheapest ?? Infinity) : (r.cab[key] ?? Infinity);
+  rows.sort((a, b) => { const x = val(a), y = val(b); return (typeof x === "string" ? x.localeCompare(y) : x - y) * dir; });
+
+  // color scale per cabin column
+  const colMinMax = {};
+  for (const X of cabs) {
+    const v = rows.map((r) => r.cab[X]).filter(isFinite);
+    colMinMax[X] = [Math.min(...v), Math.max(...v)];
+  }
+  const th = (k, label, cls = "") =>
+    `<th class="${cls} ${sortState.discover.key === k ? "sorted" : ""}" data-k="${k}">${label}${sortState.discover.key === k ? (dir > 0 ? " ▲" : " ▼") : ""}</th>`;
+  let h = `<div class="tablewrap"><table><thead><tr>
+    ${th("destination","Destination","l")}${th("region","Region","l")}${th("distance","Distance")}
+    ${cabs.map((X) => th(X, cabinLabel(X))).join("")}
+    ${th("dateCount","Dates")}<th class="l">Nonstop</th></tr></thead><tbody>`;
+  for (const r of rows) {
+    h += `<tr class="clickable" data-dest="${esc(r.destination)}"><td class="l"><b>${esc(r.destination)}</b> <span class="muted">${esc(AIRPORTS[r.destination]?.[2] || "")}</span></td>
+      <td class="l muted">${esc(r.region)}</td><td class="num">${r.distance ? fmt(r.distance) : "—"}</td>`;
+    for (const X of cabs) {
+      const m = r.cab[X];
+      if (isFinite(m)) {
+        const [mn, mx] = colMinMax[X]; const t = mx > mn ? (m - mn) / (mx - mn) : 0;
+        const aff = settings.balance > 0 && m * tripMult() <= settings.balance;
+        h += `<td class="miles" style="background:${colorFor(t)};color:#04140a">${fmt(m)}${aff ? " ✓" : ""}</td>`;
+      } else h += `<td class="muted">—</td>`;
+    }
+    h += `<td class="num">${r.dateCount}</td><td class="l">${r.direct ? '<span class="badge direct">nonstop</span>' : ""}</td></tr>`;
+  }
+  h += `</tbody></table></div>`;
+  $("discoverTable").innerHTML = h;
+  $("discoverTable").querySelectorAll("th[data-k]").forEach((el) =>
+    el.onclick = () => { const k = el.dataset.k; const st = sortState.discover; st.dir = st.key === k ? -st.dir : 1; st.key = k; saveSettings(); renderDiscover(); });
+  const bestOriginByDest = new Map(rows.map((r) => [r.destination, r.bestOrigin]));
+  $("discoverTable").querySelectorAll("tr[data-dest]").forEach((tr) =>
+    tr.onclick = () => openGridFor(
+      bestOriginByDest.get(tr.dataset.dest) || settings.home[0] || RECORDS.find((r) => r.destination === tr.dataset.dest)?.origin,
+      tr.dataset.dest));
+  renderMap(rows);
+}
+
+function renderMap(rows) {
+  const W = 720, H = 360;
+  const proj = (lat, lon) => [ (lon + 180) / 360 * W, (90 - lat) / 180 * H ];
+  const homes = (settings.home.length ? settings.home : [...new Set(filtered().map(f => f.rec.origin))])
+    .filter((a) => AIRPORTS[a]);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  for (let lon = -180; lon <= 180; lon += 30) { const [x] = proj(0, lon); svg += `<line class="${lon===0?'grat0':'grat'}" x1="${x}" y1="0" x2="${x}" y2="${H}"/>`; }
+  for (let lat = -60; lat <= 60; lat += 30) { const [, y] = proj(lat, 0); svg += `<line class="${lat===0?'grat0':'grat'}" x1="0" y1="${y}" x2="${W}" y2="${y}"/>`; }
+  const labels = [["N. America",45,-100],["S. America",-15,-60],["Europe",50,15],["Africa",5,20],["Asia",40,100],["Oceania",-25,140]];
+  for (const [t, la, lo] of labels) { const [x, y] = proj(la, lo); svg += `<text class="reglabel" x="${x}" y="${y}">${t}</text>`; }
+
+  const balance = settings.balance;
+  const valued = rows.filter((r) => AIRPORTS[r.destination] && r.cheapest != null);
+  const cheaps = valued.map((r) => r.cheapest);
+  const mn = Math.min(...cheaps), mx = Math.max(...cheaps);
+  for (const home of homes) {
+    const [hx, hy] = proj(...AIRPORTS[home]);
+    for (const r of valued) { const [dx, dy] = proj(...AIRPORTS[r.destination]); svg += `<path class="route" d="M${hx},${hy} Q${(hx+dx)/2},${Math.min(hy,dy)-18} ${dx},${dy}"/>`; }
+  }
+  for (const r of valued) {
+    const [x, y] = proj(...AIRPORTS[r.destination]);
+    const t = mx > mn ? (r.cheapest - mn) / (mx - mn) : 0;
+    const aff = balance > 0 && r.cheapest * tripMult() <= balance;
+    const fill = aff ? "var(--accent2)" : colorFor(t);
+    svg += `<circle class="dot-dest" cx="${x}" cy="${y}" r="4" fill="${fill}"
+      data-dest="${esc(r.destination)}" data-origin="${esc(r.bestOrigin || "")}" data-name="${esc(AIRPORTS[r.destination][2])}" data-miles="${r.cheapest}" data-dates="${r.dateCount}"/>`;
+  }
+  for (const home of homes) { const [x, y] = proj(...AIRPORTS[home]); svg += `<rect class="dot-home" x="${x-4}" y="${y-4}" width="8" height="8" rx="1"/>`; }
+  svg += `</svg>`;
+  const wrap = $("mapwrap");
+  wrap.innerHTML = `<div id="maptip"></div>` + svg;
+  $("mapLegend").innerHTML =
+    `<span><span class="sw" style="background:${colorFor(0)}"></span>fewer points</span>
+     <span><span class="sw" style="background:${colorFor(1)}"></span>more points</span>
+     ${balance > 0 ? `<span><span class="sw" style="background:var(--accent2)"></span>within balance (${TL()})</span>` : ""}
+     <span><span class="sw" style="background:var(--accent)"></span>home airport</span>
+     <span class="muted">${valued.length} of ${rows.length} destinations have map coordinates</span>`;
+  const tip = $("maptip");
+  wrap.querySelectorAll(".dot-dest").forEach((dot) => {
+    dot.onmousemove = (e) => {
+      const rb = wrap.getBoundingClientRect();
+      tip.style.display = "block";
+      tip.style.left = (e.clientX - rb.left + 12) + "px";
+      tip.style.top = (e.clientY - rb.top + 12) + "px";
+      tip.innerHTML = `<b>${esc(dot.dataset.dest)}</b> ${esc(dot.dataset.name)}<br>from ${fmt(+dot.dataset.miles)} pts · ${dot.dataset.dates} dates`;
+    };
+    dot.onmouseleave = () => { tip.style.display = "none"; };
+    dot.onclick = () => openGridFor(
+      dot.dataset.origin || homes[0] || settings.home[0] || RECORDS.find((r) => r.destination === dot.dataset.dest)?.origin,
+      dot.dataset.dest);
+  });
+}
+
+// === View 2: Sweet-spot value finder =======================================
+function sweetRows() {
+  const today = localToday(); // align cpp denominator with the future dates enrich-fares prices
+  const byTriple = new Map();
+  for (const { rec, q } of filtered()) {
+    if (rec.date < today) continue;
+    for (const c of q) {
+      const k = `${rec.origin}-${rec.destination}-${c.cabin}`;
+      let row = byTriple.get(k);
+      if (!row) { row = { origin: rec.origin, destination: rec.destination, cabin: c.cabin, region: `${rec.originRegion}→${rec.destinationRegion}`,
+        regionKey: `${rec.originRegion}|${rec.destinationRegion}|${c.cabin}`, distance: rec.distance, miles: Infinity, seats: 0, direct: false, airlines: "" };
+        byTriple.set(k, row); }
+      if (c.miles < row.miles) { row.miles = c.miles; row.seats = c.seats; row.direct = c.direct; row.airlines = c.airlines; }
+      if (rec.distance && !row.distance) row.distance = rec.distance;
+    }
+  }
+  const rows = [...byTriple.values()];
+  for (const r of rows) {
+    r.mpm = r.distance > 0 ? r.miles / r.distance * 1000 : null;
+    r.fareKey = `${r.origin}-${r.destination}-${r.cabin}`;
+    const auto = (DATA.cashFares || {})[r.fareKey];   // auto fare from enrich-fares.mjs
+    const fare = cashFares[r.fareKey] ?? auto;          // manual entry overrides auto
+    r.fareValue = fare ?? null;
+    r.fareAuto = cashFares[r.fareKey] == null && auto != null;
+    r.cpp = fare > 0 && r.miles > 0 ? fare * 100 / r.miles : null; // cents per point
+    r.estValue = settings.pointValue > 0 ? r.miles * settings.pointValue / 100 : null; // $ value at your valuation
+    r.beatsValuation = r.cpp != null && settings.pointValue > 0 ? r.cpp >= settings.pointValue : null;
+  }
+  // Sweet spot = in the cheapest ~25% of points-per-mile for its region pair + cabin.
+  // Thin groups (< MIN_GROUP routes) are never flagged — a quantile would be meaningless.
+  const MIN_GROUP = 5, QUANTILE = 0.25;
+  const groups = {};
+  for (const r of rows) if (r.mpm != null) (groups[r.regionKey] ||= []).push(r.mpm);
+  const cutoff = {};
+  for (const k in groups) {
+    const a = groups[k].sort((x, y) => x - y);
+    cutoff[k] = a.length < MIN_GROUP ? -Infinity : a[Math.max(0, Math.ceil(a.length * QUANTILE) - 1)];
+  }
+  for (const r of rows) r.sweet = r.mpm != null && r.mpm <= cutoff[r.regionKey];
+  return rows;
+}
+function renderSweet() {
+  const rows = sweetRows();
+  const sortBy = settings.sortSweet;
+  const cmp = {
+    mpm: (a, b) => (a.mpm ?? Infinity) - (b.mpm ?? Infinity),
+    cpp: (a, b) => (b.cpp ?? -1) - (a.cpp ?? -1),
+    miles: (a, b) => a.miles - b.miles,
+    distance: (a, b) => b.distance - a.distance,
+  }[sortBy];
+  rows.sort(cmp);
+  let h = `<div class="tablewrap"><table><thead><tr>
+    <th class="l">Route</th><th class="l">Cabin</th><th class="l">Region</th><th>Distance</th>
+    <th>Points</th><th>Pts/1000mi</th><th>Seats</th><th class="l">Cash $ (opt)</th><th>¢/pt</th><th>Est $</th><th class="l">Value</th></tr></thead><tbody>`;
+  const mpms = rows.map((r) => r.mpm).filter((x) => x != null);
+  const mn = Math.min(...mpms), mx = Math.max(...mpms);
+  for (const r of rows) {
+    const t = r.mpm != null && mx > mn ? (r.mpm - mn) / (mx - mn) : null;
+    h += `<tr><td class="l"><b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}</td>
+      <td class="l">${cabinLabel(r.cabin)}</td><td class="l muted">${esc(r.region)}</td>
+      <td class="num">${r.distance ? fmt(r.distance) : "—"}</td>
+      <td class="miles num">${fmt(r.miles)}</td>
+      <td class="num" style="background:${colorFor(t)};color:${t!=null?'#04140a':'inherit'}">${r.mpm != null ? r.mpm.toFixed(0) : "—"}</td>
+      <td class="num">${r.seats || "—"}</td>
+      <td class="l"><input type="number" min="0" step="50" value="${r.fareValue ?? ""}" data-fare="${esc(r.fareKey)}" class="fareinp${r.fareAuto ? " auto" : ""}" title="${r.fareAuto ? "Auto cash fare from Amadeus — type to override, clear to revert" : ""}"></td>
+      <td class="num" style="${r.beatsValuation===true?'color:var(--good);font-weight:600':r.beatsValuation===false?'color:var(--bad)':''}">${r.cpp != null ? r.cpp.toFixed(2) : "—"}</td>
+      <td class="num">${r.estValue != null ? "$" + fmt(r.estValue) : "—"}</td>
+      <td class="l">${r.sweet ? '<span class="badge sweet">sweet spot</span>' : ""}</td></tr>`;
+  }
+  h += `</tbody></table></div>`;
+  const fm = DATA.meta?.fares;
+  const fmDate = fm?.updatedAt ? fm.updatedAt.slice(0, 10) : "";
+  const status = fm
+    ? `<p class="hint">Auto cash fares: <b>${fm.count}</b> routes in ${esc(fm.currency || "")}${fmDate ? `, updated ${fmDate}` : ""}${fm.pricedThisRun != null ? ` (${fm.pricedThisRun} re-priced last run)` : ""}. ¢/pt &amp; Est $ use this currency. Type in any Cash $ cell to override; clear it to revert to the auto fare.</p>`
+    : "";
+  $("sweetTable").innerHTML = status + h;
+  $("sweetTable").querySelectorAll("input[data-fare]").forEach((inp) =>
+    inp.onchange = () => { const v = parseFloat(inp.value); if (v > 0) cashFares[inp.dataset.fare] = v; else delete cashFares[inp.dataset.fare]; saveFares(); renderSweet(); });
+}
+
+// === View 3: Flexible date grid ============================================
+function renderGridControls() {
+  const origins = [...new Set(RECORDS.map((r) => r.origin))].sort();
+  const oSel = $("gOrigin");
+  const curO = oSel.value || settings.home[0] || origins[0];
+  oSel.innerHTML = origins.map((o) => `<option ${o === curO ? "selected" : ""}>${esc(o)}</option>`).join("");
+  updateGridDestinations();
+  const cSel = $("gCabin");
+  const curC = cSel.value || activeCabins()[0] || "J";
+  cSel.innerHTML = CABINS.map((X) => `<option value="${X}" ${X === curC ? "selected" : ""}>${cabinLabel(X)}</option>`).join("");
+}
+function updateGridDestinations() {
+  const o = $("gOrigin").value;
+  const dests = [...new Set(RECORDS.filter((r) => r.origin === o).map((r) => r.destination))].sort();
+  const dSel = $("gDest");
+  const cur = dSel.value;
+  dSel.innerHTML = dests.map((d) => `<option ${d === cur ? "selected" : ""}>${esc(d)}${AIRPORTS[d] ? " — " + esc(AIRPORTS[d][2]) : ""}</option>`).join("");
+  // option text includes name; keep value as code
+  [...dSel.options].forEach((op) => op.value = op.textContent.split(" — ")[0]);
+  if (cur && dests.includes(cur)) dSel.value = cur;
+}
+function openGridFor(origin, dest) {
+  if (origin) $("gOrigin").value = origin;
+  updateGridDestinations();
+  if (dest) $("gDest").value = dest;
+  // Align the cabin select to the cheapest cabin that actually has availability for this
+  // route, so a clicked destination never dead-ends on "No <cabin> availability".
+  const o = $("gOrigin").value, d = $("gDest").value;
+  let best = { cabin: null, miles: Infinity };
+  for (const r of RECORDS) {
+    if (r.origin !== o || r.destination !== d) continue;
+    for (const X of CABINS) {
+      const c = r.cabins?.[X];
+      if (c && c.available && c.miles > 0 && c.miles < best.miles) best = { cabin: X, miles: c.miles };
+    }
+  }
+  if (best.cabin) $("gCabin").value = best.cabin;
+  switchTab("grid");
+  renderGrid();
+}
+function renderGrid() {
+  const o = $("gOrigin").value, d = $("gDest").value, X = $("gCabin").value;
+  const recs = RECORDS.filter((r) => r.origin === o && r.destination === d);
+  const byDate = {};
+  for (const r of recs) {
+    if (settings.start && r.date < settings.start) continue;
+    if (settings.end && r.date > settings.end) continue;
+    const c = r.cabins?.[X];
+    if (c && c.available && c.miles > 0) {
+      if (settings.direct && !c.direct) continue;
+      if (settings.seats > 0 && c.seats < settings.seats) continue;
+      if (!byDate[r.date] || c.miles < byDate[r.date].miles) byDate[r.date] = c;
+    }
+  }
+  const dates = Object.keys(byDate);
+  $("gridInfo").textContent = dates.length
+    ? `${dates.length} dates with ${cabinLabel(X)} availability ${o}→${d}`
+    : `No ${cabinLabel(X)} availability for ${o}→${d} in the cached window`;
+  const vals = dates.map((k) => byDate[k].miles);
+  const mn = Math.min(...vals), mx = Math.max(...vals);
+  $("gridLegend").innerHTML = dates.length
+    ? `<span><span class="sw" style="background:${colorFor(0)}"></span>${fmt(mn)} pts</span><span><span class="sw" style="background:${colorFor(1)}"></span>${fmt(mx)} pts</span><span class="muted">✓ = within balance (${TL()})</span>`
+    : "";
+
+  // month span = filter window if set, else data window, else min/max of this route
+  let start = settings.start || DATA.meta?.dateWindow?.start || dates.sort()[0];
+  let end = settings.end || DATA.meta?.dateWindow?.end || dates.sort().slice(-1)[0];
+  if (!start || !end) { $("gridMonths").innerHTML = `<p class="hint">Pick an origin and destination.</p>`; return; }
+  const sD = new Date(start + "T00:00"), eD = new Date(end + "T00:00");
+  let html = "";
+  const cur = new Date(sD.getFullYear(), sD.getMonth(), 1);
+  const monthFmt = (y, m) => new Date(y, m, 1).toLocaleString("en", { month: "long", year: "numeric" });
+  while (cur <= eD) {
+    const y = cur.getFullYear(), m = cur.getMonth();
+    html += `<div class="month"><h4>${monthFmt(y, m)}</h4><div class="cal">
+      ${["S","M","T","W","T","F","S"].map((x) => `<div class="dow">${x}</div>`).join("")}`;
+    const first = new Date(y, m, 1).getDay();
+    for (let i = 0; i < first; i++) html += `<div></div>`;
+    const days = new Date(y, m + 1, 0).getDate();
+    for (let day = 1; day <= days; day++) {
+      const ds = `${y}-${String(m + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const c = byDate[ds];
+      if (c) {
+        const t = mx > mn ? (c.miles - mn) / (mx - mn) : 0;
+        const aff = settings.balance > 0 && c.miles * tripMult() <= settings.balance;
+        const k = c.miles >= 1000 ? Math.round(c.miles / 1000) + "k" : c.miles;
+        html += `<div class="cell has" style="background:${colorFor(t)}" title="${ds}: ${fmt(c.miles)} pts · ${c.seats || "?"} seats${c.direct ? " · nonstop" : ""}${c.airlines ? " · " + esc(c.airlines) : ""}">
+          <span class="d">${day}</span><span class="m">${k}${aff ? "✓" : ""}</span></div>`;
+      } else {
+        html += `<div class="cell empty"><span class="d">${day}</span></div>`;
+      }
+    }
+    html += `</div></div>`;
+    cur.setMonth(cur.getMonth() + 1);
+  }
+  $("gridMonths").innerHTML = html;
+}
+
+// === View 4: What can I book now? ==========================================
+function renderAfford() {
+  const cont = $("affordCards"), tbl = $("affordTable");
+  if (!(settings.balance > 0)) {
+    cont.innerHTML = `<div class="card"><div class="lbl">Enter your <b>points balance</b> in the filter bar above to see what you can book right now.</div></div>`;
+    tbl.innerHTML = ""; return;
+  }
+  const bal = settings.balance;
+  const mult = tripMult(); // 1 = one-way, 2 = round trip (≈2× one-way points)
+  // Per-cabin reachable destinations (cheapest per origin-dest-cabin within balance)
+  const reach = { Y:new Set(), W:new Set(), J:new Set(), F:new Set() };
+  const anyDest = new Set();
+  const list = [];
+  const seen = new Map();
+  for (const { rec, q } of filtered()) {
+    for (const c of q) {
+      if (c.miles * mult > bal) continue;
+      reach[c.cabin].add(rec.destination); anyDest.add(rec.destination);
+      const k = `${rec.origin}-${rec.destination}-${c.cabin}`;
+      const prev = seen.get(k);
+      if (!prev) { const row = { origin: rec.origin, destination: rec.destination, cabin: c.cabin, miles: c.miles, dates: new Set([rec.date]), direct: c.direct, distance: rec.distance }; seen.set(k, row); list.push(row); }
+      else { prev.dates.add(rec.date); if (c.miles < prev.miles) { prev.miles = c.miles; prev.direct = c.direct; } }
+    }
+  }
+  cont.innerHTML =
+    card(fmt(bal), "points balance") +
+    card(anyDest.size, "destinations (" + TL() + ")") +
+    CABINS.map((X) => card(reach[X].size, cabinLabel(X) + " (" + TL() + ")")).join("");
+
+  const { key, dir } = sortState.afford;
+  list.forEach((r) => r.dateCount = r.dates.size);
+  const val = (r) => key === "miles" ? r.miles : key === "dateCount" ? r.dateCount : key === "left" ? bal - r.miles * mult : r[key];
+  list.sort((a, b) => { const x = val(a), y = val(b); return (typeof x === "string" ? x.localeCompare(y) : x - y) * dir; });
+  const th = (k, label, cls = "") => `<th class="${cls} ${key === k ? "sorted" : ""}" data-k="${k}">${label}${key === k ? (dir > 0 ? " ▲" : " ▼") : ""}</th>`;
+  let h = `<div class="tablewrap"><table><thead><tr>
+    ${th("origin","From","l")}${th("destination","To","l")}${th("cabin","Cabin","l")}${th("miles","Points (" + TL() + ")")}${th("left","Left (" + TL() + ")")}${th("dateCount","Dates")}<th class="l">Nonstop</th></tr></thead><tbody>`;
+  const caveat = settings.roundTrip
+    ? `<p class="hint">Points shown are <b>round trip</b> (≈2× the one-way award) and still exclude cash taxes &amp; carrier surcharges. Aeroplan prices each direction separately, so the real total can differ — confirm both legs.</p>`
+    : `<p class="hint">Points shown are <b>one-way</b> per direction and exclude cash taxes &amp; carrier surcharges (which points can’t cover). Tick <b>Round trip</b> above to compare against ≈2× the points.</p>`;
+  for (const r of list) {
+    h += `<tr><td class="l">${esc(r.origin)}</td><td class="l"><b>${esc(r.destination)}</b> <span class="muted">${esc(AIRPORTS[r.destination]?.[2] || "")}</span></td>
+      <td class="l">${cabinLabel(r.cabin)}</td><td class="miles num">${fmt(r.miles * mult)}</td>
+      <td class="num">${fmt(bal - r.miles * mult)}</td><td class="num">${r.dateCount}</td>
+      <td class="l">${r.direct ? '<span class="badge direct">nonstop</span>' : ""}</td></tr>`;
+  }
+  h += `</tbody></table></div>`;
+  if (!list.length) h = `<p class="hint">Nothing within ${fmt(bal)} points under the current filters. Try raising the balance or relaxing filters.</p>`;
+  tbl.innerHTML = caveat + h;
+  tbl.querySelectorAll("th[data-k]").forEach((el) =>
+    el.onclick = () => { const k = el.dataset.k; const st = sortState.afford; st.dir = st.key === k ? -st.dir : 1; st.key = k; saveSettings(); renderAfford(); });
+}
+function card(big, lbl) { return `<div class="card"><div class="big">${big}</div><div class="lbl">${lbl}</div></div>`; }
+
+// --- Freshness + data-loaded -----------------------------------------------
+function setFreshness(text, warn) {
+  const el = $("freshness"); el.textContent = text; el.className = "pill" + (warn ? " warn" : "");
+}
+function onDataLoaded() {
+  $("appBody").style.display = "block";
+  $("emptyState").style.display = "none";
+  // origins datalist
+  const origins = [...new Set(RECORDS.map((r) => r.origin))].sort();
+  $("originList").innerHTML = origins.map((o) => `<option value="${esc(o)}">`).join("");
+  applySettingsToUI();
+  saveSettings();
+  const gen = DATA.meta?.generatedAt;
+  if (gen) {
+    const ageH = (Date.now() - new Date(gen).getTime()) / 3.6e6;
+    const ageTxt = ageH < 24 ? `${Math.round(ageH)}h ago` : `${Math.round(ageH / 24)}d ago`;
+    setFreshness(`${fmt(RECORDS.length)} fares · updated ${ageTxt}`, ageH > 72);
+  } else setFreshness(`${fmt(RECORDS.length)} fares loaded`, false);
+  // If the whole cached window is in the past, every grid would be empty — warn loudly.
+  const winEnd = DATA.meta?.dateWindow?.end;
+  if (winEnd && winEnd < new Date().toISOString().slice(0, 10))
+    setFreshness(`${fmt(RECORDS.length)} fares · window ended ${winEnd} — re-run ingester`, true);
+  renderAll();
+}
+
+// --- Wire up filters/UI -----------------------------------------------------
+function applySettingsToUI() {
+  $("fHome").value = settings.home.join(", ");
+  [...$("fCabins").querySelectorAll("input")].forEach((c) => c.checked = settings.cabins.includes(c.value));
+  // default the date window to the cache window if user hasn't set one, and make that
+  // default canonical in settings so the shown range matches what filtered() enforces
+  const w = DATA?.meta?.dateWindow;
+  if (!settings.start && w?.start) settings.start = w.start;
+  if (!settings.end && w?.end) settings.end = w.end;
+  $("fStart").value = settings.start || "";
+  $("fEnd").value = settings.end || "";
+  $("fSeats").value = settings.seats || 0;
+  $("fMaxMiles").value = settings.maxMiles || "";
+  $("fBalance").value = settings.balance || "";
+  $("fPointValue").value = settings.pointValue || "";
+  $("fDirect").checked = settings.direct;
+  $("fRoundTrip").checked = settings.roundTrip;
+  $("fAfford").checked = settings.afford;
+  $("sweetSort").value = settings.sortSweet;
+}
+function readFiltersFromUI() {
+  settings.home = $("fHome").value.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
+  settings.cabins = [...$("fCabins").querySelectorAll("input:checked")].map((c) => c.value);
+  settings.start = $("fStart").value;
+  settings.end = $("fEnd").value;
+  settings.seats = parseInt($("fSeats").value) || 0;
+  settings.maxMiles = parseInt($("fMaxMiles").value) || 0;
+  settings.balance = parseInt($("fBalance").value) || 0;
+  settings.pointValue = parseFloat($("fPointValue").value) || 0;
+  settings.direct = $("fDirect").checked;
+  settings.roundTrip = $("fRoundTrip").checked;
+  settings.afford = $("fAfford").checked;
+  saveSettings();
+  renderAll();
+}
+function switchTab(name) {
+  document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === "view-" + name));
+}
+
+// init
+(function init() {
+  $("openBtn").onclick = openWithPicker;
+  $("openBtn2").onclick = openWithPicker;
+  $("reloadBtn").onclick = () => fileHandle ? readHandle() : openWithPicker();
+  $("fileFallback").onchange = (e) => { const f = e.target.files[0]; if (f) f.text().then(ingestText); };
+  cashFares = loadFares();
+
+  document.querySelectorAll("nav.tabs button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
+  $("showTable").onclick = () => { $("discoverTable").style.display = ""; $("discoverMap").style.display = "none"; $("showTable").classList.add("primary"); $("showMap").classList.remove("primary"); };
+  $("showMap").onclick = () => { $("discoverTable").style.display = "none"; $("discoverMap").style.display = ""; $("showMap").classList.add("primary"); $("showTable").classList.remove("primary"); };
+
+  ["fHome","fStart","fEnd","fSeats","fMaxMiles","fBalance","fPointValue"].forEach((id) => $(id).addEventListener("change", readFiltersFromUI));
+  $("fCabins").addEventListener("change", readFiltersFromUI);
+  $("fDirect").addEventListener("change", readFiltersFromUI);
+  $("fRoundTrip").addEventListener("change", readFiltersFromUI);
+  $("fAfford").addEventListener("change", readFiltersFromUI);
+  $("gOrigin").addEventListener("change", () => { updateGridDestinations(); renderGrid(); });
+  $("gDest").addEventListener("change", renderGrid);
+  $("gCabin").addEventListener("change", renderGrid);
+  $("sweetSort").addEventListener("change", () => { settings.sortSweet = $("sweetSort").value; saveSettings(); renderSweet(); });
+
+  restoreHandle();
+})();
+</script>
+</body>
+</html>
