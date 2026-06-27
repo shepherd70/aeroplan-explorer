@@ -260,6 +260,24 @@ test("historyTrend flags newly available and price drops", () => {
   assert.deepEqual(drop.spark, [60000, 50000]);
 });
 
+// --- watchlist ---------------------------------------------------------------
+test("watchList reports current points, under-target, availability, and trend per watch", () => {
+  const recs = [
+    rec("YVR", "NRT", "2026-07-01", { J: cab(60000) }),
+    rec("YVR", "NRT", "2026-07-05", { J: cab(58000) }),
+    rec("YVR", "LHR", "2026-07-01", { J: cab(70000) }, { dRegion: "Europe" }),
+  ];
+  const history = { "YVR-NRT-J": [{ t: "t0", m: 65000, d: 3 }, { t: "t1", m: 58000, d: 5 }] };
+  const watches = { "YVR-NRT-J": { target: 60000 }, "YVR-LHR-J": { target: 60000 }, "YYZ-CDG-J": { target: null } };
+  const byKey = Object.fromEntries(Explore.watchList(recs, history, watches).map((w) => [w.key, w]));
+  assert.equal(byKey["YVR-NRT-J"].current, 58000);   // cheapest available now
+  assert.equal(byKey["YVR-NRT-J"].underTarget, true); // 58k <= 60k
+  assert.equal(byKey["YVR-NRT-J"].trend.dropped, true);
+  assert.equal(byKey["YVR-LHR-J"].underTarget, false); // 70k > 60k
+  assert.equal(byKey["YYZ-CDG-J"].available, false);  // not in the records
+  assert.equal(byKey["YYZ-CDG-J"].current, null);
+});
+
 // --- integration over the committed sample ----------------------------------
 test("integration: sample-cache.json yields self-consistent results", () => {
   const cache = JSON.parse(readFileSync(join(__dirname, "..", "sample-cache.json"), "utf8"));

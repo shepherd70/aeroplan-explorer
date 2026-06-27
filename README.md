@@ -116,7 +116,7 @@ remaining-calls header, prints it as it goes, and stops before draining it.
 
 ---
 
-## The five views
+## The six views
 
 1. **Destination discovery** — from your home airport(s), every place you can go, cheapest
    points per cabin, # of available dates, nonstop flag. Table or an offline map. Click any
@@ -139,9 +139,13 @@ remaining-calls header, prints it as it goes, and stops before draining it.
    (dest→home) within a trip-length window you set (min/max nights), showing combined points,
    combined taxes, and tax-honest round-trip ¢/pt — not the ≈2× estimate. Needs return-leg data
    in the cache (`pullReturns` above); if it's missing, the tab tells you how to pull it.
+6. **Watchlist** — star any route in the Sweet-spot finder and it lands here with its current
+   cheapest points, an optional points **target**, a status (available / under target / over),
+   and its trend since your last pull. Stars and targets are saved in your browser; the list is
+   independent of the filters above.
 
 Filters at the top (home airports, cabins, dates, seats, max points, balance, point value,
-direct-only, **round trip**, within-balance) apply to all five views and are remembered
+direct-only, **round trip**, within-balance) apply to all views except the Watchlist and are remembered
 between visits. Tick **Round trip (≈2×)** to make every affordability check and the "what
 can I book" view compare against roughly double the one-way points (Aeroplan prices each
 direction separately, so it's an estimate — confirm both legs).

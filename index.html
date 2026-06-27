@@ -83,6 +83,8 @@
   .spark circle { fill: var(--accent); }
   .tdrop { color: var(--good); font-weight: 600; }
   .trise { color: var(--bad); }
+  .watch { cursor: pointer; color: var(--muted); user-select: none; }
+  .watch.on { color: var(--accent2); }
   .muted { color: var(--muted); }
   .num { font-variant-numeric: tabular-nums; }
 
@@ -176,6 +178,7 @@
     <button data-tab="grid">Flexible date grid</button>
     <button data-tab="afford">What can I book now?</button>
     <button data-tab="rt">Round trips</button>
+    <button data-tab="watch">Watchlist</button>
   </nav>
 
   <main>
@@ -241,6 +244,10 @@
         <span class="hint" id="rtInfo"></span>
       </div>
       <div id="rtBody"></div>
+    </section>
+
+    <section class="view" id="view-watch">
+      <div id="watchBody"></div>
     </section>
   </main>
 </div>
@@ -362,8 +369,10 @@ const CABIN_NAME = { Y:"Economy", W:"Premium", J:"Business", F:"First" };
 // --- App state --------------------------------------------------------------
 let DATA = null, RECORDS = [];
 let cashFares = {};            // "ORIG-DEST-CABIN" -> cash $ (for cpp), persisted
+let watches = {};              // "ORIG-DEST-CABIN" -> { target } watched routes, persisted
 const SETTINGS_KEY = "aeroplan-explorer-settings-v1";
 const FARES_KEY = "aeroplan-explorer-fares-v1";
+const WATCHES_KEY = "aeroplan-explorer-watches-v1";
 let settings = loadSettings();
 let fileHandle = null;
 const sortState = { discover: settings.sortDiscover, afford: settings.sortAfford }; // persisted via settings
@@ -391,6 +400,9 @@ function loadSettings() {
 function saveSettings() { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
 function loadFares() { try { return JSON.parse(localStorage.getItem(FARES_KEY) || "{}"); } catch { return {}; } }
 function saveFares() { localStorage.setItem(FARES_KEY, JSON.stringify(cashFares)); }
+function loadWatches() { try { return JSON.parse(localStorage.getItem(WATCHES_KEY) || "{}"); } catch { return {}; } }
+function saveWatches() { localStorage.setItem(WATCHES_KEY, JSON.stringify(watches)); }
+function toggleWatch(key) { if (watches[key]) delete watches[key]; else watches[key] = { target: null }; saveWatches(); renderSweet(); renderWatch(); }
 
 // --- Loading the cache ------------------------------------------------------
 async function openWithPicker() {
@@ -493,6 +505,7 @@ function renderAll() {
   renderAfford();
   renderRTControls();
   renderRT();
+  renderWatch();
 }
 
 // === View 1: Destination discovery =========================================
@@ -618,7 +631,7 @@ function renderSweet() {
   const mn = Math.min(...mpms), mx = Math.max(...mpms);
   for (const r of rows) {
     const t = r.mpm != null && mx > mn ? (r.mpm - mn) / (mx - mn) : null;
-    h += `<tr><td class="l"><b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}</td>
+    h += `<tr><td class="l"><span class="watch${watches[r.fareKey] ? " on" : ""}" data-watch="${esc(r.fareKey)}" title="Watch this route">${watches[r.fareKey] ? "★" : "☆"}</span> <b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}</td>
       <td class="l">${cabinLabel(r.cabin)}</td><td class="l muted">${esc(r.region)}</td>
       <td class="num">${r.distance ? fmt(r.distance) : "—"}</td>
       <td class="miles num">${fmt(r.miles)}</td>
@@ -643,6 +656,7 @@ function renderSweet() {
   $("sweetTable").innerHTML = status + histNote + h;
   $("sweetTable").querySelectorAll("input[data-fare]").forEach((inp) =>
     inp.onchange = () => { const v = parseFloat(inp.value); if (v > 0) cashFares[inp.dataset.fare] = v; else delete cashFares[inp.dataset.fare]; saveFares(); renderSweet(); });
+  $("sweetTable").querySelectorAll("[data-watch]").forEach((el) => el.onclick = () => toggleWatch(el.dataset.watch));
 }
 
 // === View 3: Flexible date grid ============================================
@@ -859,6 +873,44 @@ function renderRT() {
   $("rtBody").innerHTML = h;
 }
 
+// === Watchlist (starred routes + optional points targets) ==================
+function renderWatch() {
+  if (!DATA) return;
+  const list = Explore.watchList(RECORDS, DATA.history || null, watches);
+  if (!list.length) {
+    $("watchBody").innerHTML = `<div class="empty-state" style="padding:50px 20px"><h2>No watched routes yet</h2>
+      <p>Click the ☆ next to any route in the <b>Sweet-spot value finder</b> to watch it. Set a points target here and the explorer flags when it's bookable under target — and whether it dropped since your last pull.</p></div>`;
+    return;
+  }
+  // met (under target) first, then available, then unavailable; cheapest first within a group.
+  const rank = (w) => (w.underTarget ? 0 : w.available ? 1 : 2);
+  list.sort((a, b) => rank(a) - rank(b) || (a.current ?? Infinity) - (b.current ?? Infinity));
+  const nAvail = list.filter((w) => w.available).length;
+  const nUnder = list.filter((w) => w.underTarget).length;
+  let h = `<p class="hint"><b>${list.length}</b> watched · <b>${nAvail}</b> available now · <b>${nUnder}</b> under target. Stars and targets are saved in this browser.</p>
+    <div class="tablewrap"><table><thead><tr>
+    <th class="l">★</th><th class="l">Route</th><th class="l">Cabin</th><th>Cheapest now</th><th class="l">Target pts</th><th class="l">Status</th><th class="l">Trend</th></tr></thead><tbody>`;
+  for (const w of list) {
+    const status = !w.available ? '<span class="muted">unavailable</span>'
+      : w.underTarget === true ? '<span class="badge afford">under target</span>'
+      : w.underTarget === false ? `<span class="muted">${fmt(w.current - w.target)} over</span>`
+      : '<span class="badge direct">available</span>';
+    h += `<tr>
+      <td class="l"><span class="watch on" data-watch="${esc(w.key)}" title="Unwatch">★</span></td>
+      <td class="l"><b>${esc(w.origin)}→${esc(w.dest)}</b> <span class="muted">${esc(AIRPORTS[w.dest]?.[2] || "")}</span></td>
+      <td class="l">${cabinLabel(w.cabin)}</td>
+      <td class="miles num">${w.current != null ? fmt(w.current) : "—"}</td>
+      <td class="l"><input type="number" min="0" step="1000" value="${w.target ?? ""}" data-wtarget="${esc(w.key)}" class="fareinp" placeholder="any" title="Flag when the cheapest is at or below this"></td>
+      <td class="l">${status}</td>
+      ${trendCell(w.key)}</tr>`;
+  }
+  h += `</tbody></table></div>`;
+  $("watchBody").innerHTML = h;
+  $("watchBody").querySelectorAll("[data-watch]").forEach((el) => el.onclick = () => toggleWatch(el.dataset.watch));
+  $("watchBody").querySelectorAll("input[data-wtarget]").forEach((inp) =>
+    inp.onchange = () => { const v = parseInt(inp.value); watches[inp.dataset.wtarget] = { target: v > 0 ? v : null }; saveWatches(); renderWatch(); });
+}
+
 // --- Freshness + data-loaded -----------------------------------------------
 function setFreshness(text, warn) {
   const el = $("freshness"); el.textContent = text; el.className = "pill" + (warn ? " warn" : "");
@@ -932,6 +984,7 @@ function switchTab(name) {
   $("reloadBtn").onclick = () => fileHandle ? readHandle() : openWithPicker();
   $("fileFallback").onchange = (e) => { const f = e.target.files[0]; if (f) f.text().then(ingestText); };
   cashFares = loadFares();
+  watches = loadWatches();
 
   document.querySelectorAll("nav.tabs button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
   $("showTable").onclick = () => { $("discoverTable").style.display = ""; $("discoverMap").style.display = "none"; $("showTable").classList.add("primary"); $("showMap").classList.remove("primary"); };
