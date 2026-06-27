@@ -77,6 +77,12 @@
   .badge.sweet { background: var(--good); color: #05210f; font-weight: 600; }
   .badge.direct { background: #1e3a5f; color: var(--accent); }
   .badge.afford { background: var(--accent2); color: #2a1a02; font-weight: 600; }
+  .badge.new { background: var(--accent); color: #04222e; font-weight: 600; }
+  .spark { vertical-align: middle; }
+  .spark path { fill: none; stroke: var(--muted); stroke-width: 1.2; }
+  .spark circle { fill: var(--accent); }
+  .tdrop { color: var(--good); font-weight: 600; }
+  .trise { color: var(--bad); }
   .muted { color: var(--muted); }
   .num { font-variant-numeric: tabular-nums; }
 
@@ -441,6 +447,31 @@ function colorFor(t) { // t in [0,1], 0=best(green) 1=worst(red)
   const h = 120 * (1 - Math.max(0, Math.min(1, t)));
   return `hsl(${h} 65% 42%)`;
 }
+// Inline sparkline of a points-history series (0 = unavailable at that ingest -> a gap).
+function sparkline(vals, w = 58, h = 14) {
+  const pts = vals.map((v, i) => ({ i, v })).filter((p) => p.v > 0);
+  if (pts.length < 2) return "";
+  const xs = Math.max(1, vals.length - 1);
+  const mn = Math.min(...pts.map((p) => p.v)), mx = Math.max(...pts.map((p) => p.v));
+  const X = (i) => (i / xs) * (w - 2) + 1, Y = (v) => mx > mn ? (h - 1) - ((v - mn) / (mx - mn)) * (h - 2) : h / 2;
+  const d = pts.map((p, j) => `${j ? "L" : "M"}${X(p.i).toFixed(1)} ${Y(p.v).toFixed(1)}`).join(" ");
+  const last = pts[pts.length - 1];
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><path d="${d}"/><circle cx="${X(last.i).toFixed(1)}" cy="${Y(last.v).toFixed(1)}" r="1.5"/></svg>`;
+}
+function trendBadge(tr) {
+  if (!tr) return "";
+  if (tr.isNew) return '<span class="badge new">NEW</span>';
+  if (tr.dropped) return `<span class="tdrop" title="cheaper by ${fmt(-tr.deltaMiles)} since last pull">▼ ${fmt(-tr.deltaMiles)}</span>`;
+  if (tr.rose) return `<span class="trise" title="up ${fmt(tr.deltaMiles)} since last pull">▲ ${fmt(tr.deltaMiles)}</span>`;
+  return "";
+}
+// A "Trend" table cell for a route+cabin history key (sparkline + change badge).
+function trendCell(key) {
+  const tr = DATA.history ? Explore.historyTrend(DATA.history[key]) : null;
+  if (!tr) return '<td class="l muted">—</td>';
+  const sp = sparkline(tr.spark), badge = trendBadge(tr);
+  return `<td class="l">${sp}${sp && badge ? " " : ""}${badge || (sp ? "" : '<span class="muted">—</span>')}</td>`;
+}
 function activeCabins() { return CABINS.filter((X) => settings.cabins.includes(X)); }
 const tripMult = () => settings.roundTrip ? 2 : 1;          // round-trip ≈ 2× one-way points
 const TL = () => settings.roundTrip ? "round trip" : "1-way"; // trip-type label for affordability
@@ -582,7 +613,7 @@ function renderSweet() {
   rows.sort(cmp);
   let h = `<div class="tablewrap"><table><thead><tr>
     <th class="l">Route</th><th class="l">Cabin</th><th class="l">Region</th><th>Distance</th>
-    <th>Points</th><th>Pts/1000mi</th><th>Seats</th><th>Taxes</th><th class="l">Cash $ (opt)</th><th>¢/pt</th><th>Est $</th><th class="l">Value</th></tr></thead><tbody>`;
+    <th>Points</th><th class="l">Trend</th><th>Pts/1000mi</th><th>Seats</th><th>Taxes</th><th class="l">Cash $ (opt)</th><th>¢/pt</th><th>Est $</th><th class="l">Value</th></tr></thead><tbody>`;
   const mpms = rows.map((r) => r.mpm).filter((x) => x != null);
   const mn = Math.min(...mpms), mx = Math.max(...mpms);
   for (const r of rows) {
@@ -591,6 +622,7 @@ function renderSweet() {
       <td class="l">${cabinLabel(r.cabin)}</td><td class="l muted">${esc(r.region)}</td>
       <td class="num">${r.distance ? fmt(r.distance) : "—"}</td>
       <td class="miles num">${fmt(r.miles)}</td>
+      ${trendCell(r.fareKey)}
       <td class="num" style="background:${colorFor(t)};color:${t!=null?'#04140a':'inherit'}">${r.mpm != null ? r.mpm.toFixed(0) : "—"}</td>
       <td class="num">${r.seats || "—"}</td>
       <td class="num" title="${r.taxes != null ? "$" + r.taxes.toFixed(2) + " " + esc(r.taxesCurrency) + " taxes &amp; carrier surcharges on the award" : "Re-run node ingest.mjs to capture taxes"}">${r.taxes != null ? "$" + fmt(r.taxes) : "—"}</td>
@@ -605,7 +637,10 @@ function renderSweet() {
   const status = fm
     ? `<p class="hint">Auto cash fares: <b>${fm.count}</b> routes in ${esc(fm.currency || "")}${fmDate ? `, updated ${fmDate}` : ""}${fm.pricedThisRun != null ? ` (${fm.pricedThisRun} re-priced last run)` : ""}. <b>¢/pt is net of the award’s taxes</b> when the fare &amp; tax share a currency (hover a ¢/pt cell to check); Est $ uses your point value. Type in any Cash $ cell to override; clear it to revert to the auto fare.</p>`
     : "";
-  $("sweetTable").innerHTML = status + h;
+  let nNew = 0, nDrop = 0;
+  if (DATA.history) for (const r of rows) { const tr = Explore.historyTrend(DATA.history[r.fareKey]); if (tr) { if (tr.isNew) nNew++; else if (tr.dropped) nDrop++; } }
+  const histNote = DATA.history ? `<p class="hint">Since the previous pull: <b>${nNew}</b> newly available, <b>${nDrop}</b> cheaper. The <b>Trend</b> column shows each route's cheapest-points history.</p>` : "";
+  $("sweetTable").innerHTML = status + histNote + h;
   $("sweetTable").querySelectorAll("input[data-fare]").forEach((inp) =>
     inp.onchange = () => { const v = parseFloat(inp.value); if (v > 0) cashFares[inp.dataset.fare] = v; else delete cashFares[inp.dataset.fare]; saveFares(); renderSweet(); });
 }

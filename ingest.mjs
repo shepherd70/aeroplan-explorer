@@ -11,7 +11,9 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import Explore from "./lib/explore.js"; // shared pure helpers (CommonJS default import)
 
+const { observeHistory, mergeHistory } = Explore;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
@@ -42,6 +44,7 @@ const CONFIG = {
   pauseMs: 300,                  // polite delay between page requests
   quotaFloor: 25,               // stop early if remaining daily calls drops below this
   onlyKeepAvailable: true,       // drop records with no available cabin
+  trackHistory: true,            // carry forward a compact per-route price/availability history
   outFile: join(__dirname, "aeroplan-cache.json"),
 };
 
@@ -93,12 +96,13 @@ async function main() {
 
   // Carry forward any cash fares added by enrich-fares.mjs so refreshing availability
   // doesn't wipe them (re-run enrich-fares.mjs to update the fares themselves).
-  let preservedFares = null, preservedFaresMeta = null;
+  let preservedFares = null, preservedFaresMeta = null, preservedHistory = null;
   if (existsSync(CONFIG.outFile)) {
     try {
       const old = JSON.parse(readFileSync(CONFIG.outFile, "utf8"));
       preservedFares = old.cashFares || null;
       preservedFaresMeta = old.meta?.fares || null;
+      preservedHistory = old.history || null;
     } catch { /* ignore unreadable/old cache */ }
   }
 
@@ -203,11 +207,11 @@ async function main() {
   } finally {
     // Always persist whatever we collected — a mid-run failure shouldn't waste the
     // quota already spent or discard pages already fetched.
-    writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFaresMeta);
+    writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFaresMeta, preservedHistory);
   }
 }
 
-function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFaresMeta) {
+function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFaresMeta, preservedHistory) {
   const records = [...byId.values()].sort(
     (a, b) =>
       (a.origin || "").localeCompare(b.origin || "") ||
@@ -215,10 +219,18 @@ function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFar
       (a.date || "").localeCompare(b.date || "")
   );
 
+  const generatedAt = new Date().toISOString();
+  // Carry forward a compact per-route price/availability history (one observation per run),
+  // so the explorer can flag drops and newly-available space. Disabling tracking keeps any
+  // existing history untouched rather than wiping it.
+  const history = CONFIG.trackHistory
+    ? mergeHistory(preservedHistory, observeHistory(records), generatedAt)
+    : preservedHistory;
+
   const cache = {
     meta: {
       source: CONFIG.source,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       dateWindow: { start: CONFIG.startDate, end: CONFIG.endDate },
       originRegions: CONFIG.originRegions,
       destinationRegion: CONFIG.destinationRegion,
@@ -231,10 +243,12 @@ function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFar
     records,
   };
   if (preservedFares) cache.cashFares = preservedFares;
+  if (history && Object.keys(history).length) cache.history = history;
 
   writeFileSync(CONFIG.outFile, JSON.stringify(cache, null, 0));
   console.log(`\n✅ Wrote ${records.length} records to ${CONFIG.outFile}`);
   console.log(`   API calls used: ${apiCalls}` + (quotaRemaining != null ? `, ~${quotaRemaining} left today` : ""));
+  if (cache.history) console.log(`   History: ${Object.keys(cache.history).length} route+cabin series tracked.`);
   if (preservedFares) console.log(`   Kept ${Object.keys(preservedFares).length} cash fares (re-run enrich-fares.mjs to refresh).`);
   if (!records.length) {
     console.log("   (No records — widen the date window or origin regions in CONFIG.)");
