@@ -107,6 +107,7 @@ Edit the `CONFIG` block at the top of `ingest.mjs`:
 | `take` | `1000` | Page size (10–1000). Bigger = fewer API calls. |
 | `quotaFloor` | `25` | Stop early if remaining daily calls drops this low. |
 | `onlyKeepAvailable` | `true` | Drop records with no bookable cabin. |
+| `trackHistory` | `true` | Carry forward a compact per-route price/availability history (`cache.history`) so the explorer can flag drops & newly-available space across pulls. |
 
 seats.aero uses a **daily usage quota** (not per-second). The ingester reads the
 remaining-calls header, prints it as it goes, and stops before draining it.
@@ -125,7 +126,9 @@ remaining-calls header, prints it as it goes, and stops before draining it.
    routes aren't flagged). A **Taxes** column shows the award's cash taxes & surcharges, and
    pasting a cash fare on any row gives true, tax-honest ¢-per-point. Set a **Point value ¢**
    in the filters to see each award's estimated $ value and flag fares that beat your
-   valuation (the ¢/pt cell turns green).
+   valuation (the ¢/pt cell turns green). A **Trend** column sparklines each route's
+   cheapest-points history and flags drops (▼), rises (▲), and newly-available space (NEW)
+   since your last pull.
 3. **Flexible date grid** — pick a route, see a month-by-month calendar heatmap of points
    cost and seats. The fix for "I don't have fixed dates."
 4. **What can I book now?** — enter your balance; see destinations reachable **one-way**
@@ -161,6 +164,9 @@ direction separately, so it's an estimate — confirm both legs).
   every table, just not as map dots. Add more in the `AIRPORTS` object in `index.html`.
 - **Data is a snapshot.** Availability is only as fresh as your last `node ingest.mjs`. The
   header shows the cache age and warns when it's over ~3 days old.
+- **History is per pull.** `cache.history` keeps a short series (cheapest points + # dates) per
+  route+cabin — one point per `node ingest.mjs` run, capped and pruned. The Trend column needs
+  ≥2 pulls and a stable pull config to be meaningful; switch it off with `trackHistory: false`.
 - **Browser support:** "Open cache file…" uses the File System Access API (Chrome/Edge).
   Other browsers fall back to a normal file picker (no auto-reload).
 

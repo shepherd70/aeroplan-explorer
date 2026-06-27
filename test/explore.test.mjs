@@ -218,6 +218,48 @@ test("roundTripRows flags missing return data so the UI can prompt a returns pul
   assert.equal(res.rows.length, 0);
 });
 
+// --- price / availability history --------------------------------------------
+test("observeHistory records cheapest miles + date count per route+cabin", () => {
+  const recs = [
+    rec("YVR", "NRT", "2026-07-01", { J: cab(62000) }),
+    rec("YVR", "NRT", "2026-07-05", { J: cab(58000), Y: cab(34000) }),
+  ];
+  const obs = Explore.observeHistory(recs);
+  assert.deepEqual(obs["YVR-NRT-J"], { m: 58000, d: 2 });
+  assert.deepEqual(obs["YVR-NRT-Y"], { m: 34000, d: 1 });
+});
+
+test("mergeHistory appends observations and caps the series length", () => {
+  let h = {};
+  h = Explore.mergeHistory(h, { "A-B-J": { m: 60000, d: 3 } }, "2026-06-01T00:00:00Z", { maxObs: 2 });
+  h = Explore.mergeHistory(h, { "A-B-J": { m: 55000, d: 4 } }, "2026-06-02T00:00:00Z", { maxObs: 2 });
+  h = Explore.mergeHistory(h, { "A-B-J": { m: 50000, d: 5 } }, "2026-06-03T00:00:00Z", { maxObs: 2 });
+  assert.equal(h["A-B-J"].length, 2);
+  assert.deepEqual(h["A-B-J"].map((s) => s.m), [55000, 50000]);
+});
+
+test("mergeHistory records unavailability, then prunes a long-dead route", () => {
+  let h = { "A-B-J": [{ t: "t0", m: 60000, d: 2 }] };
+  h = Explore.mergeHistory(h, {}, "t1", { pruneAfter: 3 });
+  assert.ok(h["A-B-J"], "kept after one empty run");
+  assert.equal(h["A-B-J"].at(-1).m, 0);
+  h = Explore.mergeHistory(h, {}, "t2", { pruneAfter: 3 });
+  h = Explore.mergeHistory(h, {}, "t3", { pruneAfter: 3 });
+  assert.equal(h["A-B-J"], undefined); // three empty runs -> pruned
+});
+
+test("historyTrend flags newly available and price drops", () => {
+  assert.equal(Explore.historyTrend([]), null);
+  const fresh = Explore.historyTrend([{ t: "t0", m: 0, d: 0 }, { t: "t1", m: 60000, d: 3 }]);
+  assert.equal(fresh.isNew, true);
+  assert.equal(fresh.current, 60000);
+  const drop = Explore.historyTrend([{ t: "t0", m: 60000, d: 3 }, { t: "t1", m: 50000, d: 4 }]);
+  assert.equal(drop.dropped, true);
+  assert.equal(drop.deltaMiles, -10000);
+  assert.equal(drop.rose, false);
+  assert.deepEqual(drop.spark, [60000, 50000]);
+});
+
 // --- integration over the committed sample ----------------------------------
 test("integration: sample-cache.json yields self-consistent results", () => {
   const cache = JSON.parse(readFileSync(join(__dirname, "..", "sample-cache.json"), "utf8"));
