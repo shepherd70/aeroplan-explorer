@@ -114,10 +114,8 @@ async function main() {
         break;
       }
       const label = `${pass.o || "ALL"}→${pass.d || "ALL"}`;
-      let cursor = null;
       let skip = 0;
-      let lastCursor = null;
-      let mode = null; // "cursor" | "skip" — locked after the first page
+      let snapshot = null; // seats.aero "cursor": a constant snapshot token, not an advancing pointer
       for (let page = 0; page < CONFIG.maxPagesPerRegion; page++) {
         const params = new URLSearchParams({
           source: CONFIG.source,
@@ -127,9 +125,10 @@ async function main() {
         });
         if (pass.o) params.set("origin_region", pass.o);
         if (pass.d) params.set("destination_region", pass.d);
-        // Paginate with whichever mode the first page revealed (cursor preferred).
-        if (mode === "cursor" && cursor != null) params.set("cursor", String(cursor));
-        else if (mode === "skip" && skip > 0) params.set("skip", String(skip));
+        // seats.aero paginates by `skip` (offset); its `cursor` is a constant snapshot token
+        // (NOT an advancing pointer), so pass it back to read every page from one snapshot.
+        if (skip > 0) params.set("skip", String(skip));
+        if (snapshot != null) params.set("cursor", String(snapshot));
 
         const url = `${CONFIG.base}/availability?${params.toString()}`;
 
@@ -180,21 +179,15 @@ async function main() {
             (quotaRemaining != null ? `, ~${quotaRemaining} calls left` : "")
         );
 
-        // Decide whether to continue. Lock the pagination mode on the first page so we
-        // never alternate between cursor and skip (which could duplicate or miss pages).
+        // Capture the snapshot token from the first page; advance by skip while hasMore.
+        if (snapshot == null && !Array.isArray(json) && json.cursor != null) snapshot = json.cursor;
         const pageFull = items.length >= CONFIG.take;
-        const nextCursor = Array.isArray(json) ? null : (json.cursor ?? json.nextCursor ?? null);
-        if (mode === null) mode = nextCursor != null ? "cursor" : "skip";
         const more = Array.isArray(json)
           ? pageFull
-          : (json.hasMore != null ? !!json.hasMore : (nextCursor != null || pageFull));
-        skip += items.length; // keep skip in sync no matter which mode we use
+          : (json.hasMore != null ? !!json.hasMore : pageFull);
+        skip += items.length;
 
         if (!more || items.length === 0) break;
-        if (mode === "cursor") {
-          if (nextCursor == null || nextCursor === lastCursor) break; // no fresh cursor — stop cleanly
-          lastCursor = cursor = nextCursor;
-        }
 
         if (quotaRemaining != null && quotaRemaining <= CONFIG.quotaFloor) {
           console.log(`\n  ⚠ Stopping early — only ~${quotaRemaining} API calls left today.`);
