@@ -9,9 +9,11 @@
 // Zero dependencies — uses Node 18+ native fetch. (Tested on Node v24.)
 
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
+import Explore from "./lib/explore.js"; // shared pure helpers (CommonJS default import)
 
+const { observeHistory, mergeHistory } = Explore;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
@@ -32,22 +34,35 @@ const CONFIG = {
   // Optional DESTINATION region filter (single value or null = all destinations).
   destinationRegion: null,
 
+  // Pull RETURN legs too (dest→home), so the Round-trips view can pair outbound+return.
+  // Adds a reverse pass per origin region — roughly doubles quota. Off by default.
+  pullReturns: false,
+
   take: 1000,                    // page size (10–1000). Bigger = fewer calls.
-  maxPagesPerRegion: 60,         // safety cap so a bad loop can't drain your quota
+  maxPagesPerRegion: 200,        // backstop against a runaway loop; quotaFloor is the real guard
   maxRetries: 4,                 // retries on 429/5xx (exponential backoff, honors Retry-After)
   pauseMs: 300,                  // polite delay between page requests
   quotaFloor: 25,               // stop early if remaining daily calls drops below this
   onlyKeepAvailable: true,       // drop records with no available cabin
+  trackHistory: true,            // carry forward a compact per-route price/availability history
   outFile: join(__dirname, "aeroplan-cache.json"),
 };
 
 // ---------------------------------------------------------------------------
 const CABINS = ["Y", "W", "J", "F"]; // economy, premium economy, business, first
 
-main().catch((err) => {
-  console.error("\n❌ Ingest failed:", err?.message || err);
-  process.exit(1);
-});
+// Run the ingester only when this file is executed directly — not when a test
+// (or another module) imports normalize() / helpers below.
+if (isMain(import.meta.url)) {
+  main().catch((err) => {
+    console.error("\n❌ Ingest failed:", err?.message || err);
+    process.exit(1);
+  });
+}
+
+function isMain(metaUrl) {
+  return !!process.argv[1] && metaUrl === pathToFileURL(process.argv[1]).href;
+}
 
 async function main() {
   const apiKey = loadApiKey();
@@ -67,7 +82,13 @@ async function main() {
   );
   console.log("");
 
-  const regionPasses = CONFIG.originRegions.length ? CONFIG.originRegions : [null];
+  // Each pass is an {o: originRegion, d: destinationRegion} filter (null = unfiltered).
+  const baseRegions = CONFIG.originRegions.length ? CONFIG.originRegions : [null];
+  const passes = baseRegions.map((r) => ({ o: r, d: CONFIG.destinationRegion }));
+  if (CONFIG.pullReturns) {
+    // The return of an (origin=R → dest=D) outbound is (origin=D → dest=R); pull those too.
+    for (const r of baseRegions) passes.push({ o: CONFIG.destinationRegion, d: r });
+  }
   const byId = new Map(); // dedupe across passes by record id
   let apiCalls = 0;
   let quotaRemaining = null;
@@ -75,21 +96,26 @@ async function main() {
 
   // Carry forward any cash fares added by enrich-fares.mjs so refreshing availability
   // doesn't wipe them (re-run enrich-fares.mjs to update the fares themselves).
-  let preservedFares = null, preservedFaresMeta = null;
+  let preservedFares = null, preservedFaresMeta = null, preservedHistory = null;
   if (existsSync(CONFIG.outFile)) {
     try {
       const old = JSON.parse(readFileSync(CONFIG.outFile, "utf8"));
       preservedFares = old.cashFares || null;
       preservedFaresMeta = old.meta?.fares || null;
+      preservedHistory = old.history || null;
     } catch { /* ignore unreadable/old cache */ }
   }
 
   try {
-    for (const region of regionPasses) {
-      let cursor = null;
+    for (const pass of passes) {
+      // Don't start another pass once the daily quota is nearly drained.
+      if (quotaRemaining != null && quotaRemaining <= CONFIG.quotaFloor) {
+        console.log(`\n  ⚠ Skipping remaining passes — only ~${quotaRemaining} API calls left today.`);
+        break;
+      }
+      const label = `${pass.o || "ALL"}→${pass.d || "ALL"}`;
       let skip = 0;
-      let lastCursor = null;
-      let mode = null; // "cursor" | "skip" — locked after the first page
+      let snapshot = null; // seats.aero "cursor": a constant snapshot token, not an advancing pointer
       for (let page = 0; page < CONFIG.maxPagesPerRegion; page++) {
         const params = new URLSearchParams({
           source: CONFIG.source,
@@ -97,11 +123,12 @@ async function main() {
           end_date: CONFIG.endDate,
           take: String(CONFIG.take),
         });
-        if (region) params.set("origin_region", region);
-        if (CONFIG.destinationRegion) params.set("destination_region", CONFIG.destinationRegion);
-        // Paginate with whichever mode the first page revealed (cursor preferred).
-        if (mode === "cursor" && cursor != null) params.set("cursor", String(cursor));
-        else if (mode === "skip" && skip > 0) params.set("skip", String(skip));
+        if (pass.o) params.set("origin_region", pass.o);
+        if (pass.d) params.set("destination_region", pass.d);
+        // seats.aero paginates by `skip` (offset); its `cursor` is a constant snapshot token
+        // (NOT an advancing pointer), so pass it back to read every page from one snapshot.
+        if (skip > 0) params.set("skip", String(skip));
+        if (snapshot != null) params.set("cursor", String(snapshot));
 
         const url = `${CONFIG.base}/availability?${params.toString()}`;
 
@@ -118,13 +145,13 @@ async function main() {
           if ((res.status === 429 || res.status >= 500) && attempt < CONFIG.maxRetries) {
             const ra = parseInt(res.headers.get("retry-after") || "", 10);
             const waitMs = Number.isFinite(ra) ? ra * 1000 : Math.min(30000, 1000 * 2 ** attempt);
-            console.warn(`\n  ⚠ HTTP ${res.status} on ${region || "ALL"} page ${page + 1} — retrying in ${Math.round(waitMs / 1000)}s`);
+            console.warn(`\n  ⚠ HTTP ${res.status} on ${label} page ${page + 1} — retrying in ${Math.round(waitMs / 1000)}s`);
             await sleep(waitMs);
             continue;
           }
           const body = await res.text().catch(() => "");
           throw new Error(
-            `HTTP ${res.status} ${res.statusText} on ${region || "ALL"} page ${page + 1}` +
+            `HTTP ${res.status} ${res.statusText} on ${label} page ${page + 1}` +
               (body ? `\n   ${body.slice(0, 400)}` : "")
           );
         }
@@ -147,27 +174,20 @@ async function main() {
           byId.set(rec.id || `${rec.origin}-${rec.destination}-${rec.date}`, rec);
         }
 
-        const label = region || "ALL";
         process.stdout.write(
           `\r  ${label}: page ${page + 1}, ${byId.size} unique records` +
             (quotaRemaining != null ? `, ~${quotaRemaining} calls left` : "")
         );
 
-        // Decide whether to continue. Lock the pagination mode on the first page so we
-        // never alternate between cursor and skip (which could duplicate or miss pages).
+        // Capture the snapshot token from the first page; advance by skip while hasMore.
+        if (snapshot == null && !Array.isArray(json) && json.cursor != null) snapshot = json.cursor;
         const pageFull = items.length >= CONFIG.take;
-        const nextCursor = Array.isArray(json) ? null : (json.cursor ?? json.nextCursor ?? null);
-        if (mode === null) mode = nextCursor != null ? "cursor" : "skip";
         const more = Array.isArray(json)
           ? pageFull
-          : (json.hasMore != null ? !!json.hasMore : (nextCursor != null || pageFull));
-        skip += items.length; // keep skip in sync no matter which mode we use
+          : (json.hasMore != null ? !!json.hasMore : pageFull);
+        skip += items.length;
 
         if (!more || items.length === 0) break;
-        if (mode === "cursor") {
-          if (nextCursor == null || nextCursor === lastCursor) break; // no fresh cursor — stop cleanly
-          lastCursor = cursor = nextCursor;
-        }
 
         if (quotaRemaining != null && quotaRemaining <= CONFIG.quotaFloor) {
           console.log(`\n  ⚠ Stopping early — only ~${quotaRemaining} API calls left today.`);
@@ -180,11 +200,11 @@ async function main() {
   } finally {
     // Always persist whatever we collected — a mid-run failure shouldn't waste the
     // quota already spent or discard pages already fetched.
-    writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFaresMeta);
+    writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFaresMeta, preservedHistory);
   }
 }
 
-function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFaresMeta) {
+function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFaresMeta, preservedHistory) {
   const records = [...byId.values()].sort(
     (a, b) =>
       (a.origin || "").localeCompare(b.origin || "") ||
@@ -192,13 +212,22 @@ function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFar
       (a.date || "").localeCompare(b.date || "")
   );
 
+  const generatedAt = new Date().toISOString();
+  // Carry forward a compact per-route price/availability history (one observation per run),
+  // so the explorer can flag drops and newly-available space. Disabling tracking keeps any
+  // existing history untouched rather than wiping it.
+  const history = CONFIG.trackHistory
+    ? mergeHistory(preservedHistory, observeHistory(records), generatedAt)
+    : preservedHistory;
+
   const cache = {
     meta: {
       source: CONFIG.source,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       dateWindow: { start: CONFIG.startDate, end: CONFIG.endDate },
       originRegions: CONFIG.originRegions,
       destinationRegion: CONFIG.destinationRegion,
+      pullReturns: CONFIG.pullReturns,
       recordCount: records.length,
       apiCallsUsed: apiCalls,
       quotaRemainingAtEnd: quotaRemaining,
@@ -207,10 +236,12 @@ function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFar
     records,
   };
   if (preservedFares) cache.cashFares = preservedFares;
+  if (history && Object.keys(history).length) cache.history = history;
 
   writeFileSync(CONFIG.outFile, JSON.stringify(cache, null, 0));
   console.log(`\n✅ Wrote ${records.length} records to ${CONFIG.outFile}`);
   console.log(`   API calls used: ${apiCalls}` + (quotaRemaining != null ? `, ~${quotaRemaining} left today` : ""));
+  if (cache.history) console.log(`   History: ${Object.keys(cache.history).length} route+cabin series tracked.`);
   if (preservedFares) console.log(`   Kept ${Object.keys(preservedFares).length} cash fares (re-run enrich-fares.mjs to refresh).`);
   if (!records.length) {
     console.log("   (No records — widen the date window or origin regions in CONFIG.)");
@@ -244,6 +275,9 @@ function normalize(raw) {
       seats: toInt(raw[`${X}RemainingSeats`]) || 0,
       direct: !!raw[`${X}Direct`],
       airlines: (raw[`${X}Airlines`] || "").toString().trim(),
+      // Total cash payable on this award (taxes + carrier surcharges), in the smallest
+      // unit of taxesCurrency — i.e. cents. seats.aero reports this as an int; 0 = none.
+      taxes: toInt(raw[`${X}TotalTaxes`]) || 0,
     };
   }
 
@@ -255,6 +289,7 @@ function normalize(raw) {
     destination: String(destination).toUpperCase(),
     destinationRegion: get("DestinationRegion", "destinationRegion") || "",
     distance: toInt(get("Distance", "distance")) || 0,
+    taxesCurrency: (get("TaxesCurrency", "taxesCurrency") || "").toString().toUpperCase(),
     source: raw.Source || route.Source || CONFIG.source,
     updatedAt: raw.UpdatedAt || raw.updatedAt || null,
     cabins,
@@ -313,3 +348,6 @@ function addDays(d, n) {
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+// Exported for unit tests. Importing this file does NOT run the ingester (see isMain).
+export { normalize, toInt, hasAnyCabin };

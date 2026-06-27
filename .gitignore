@@ -1,9 +1,12 @@
 # Secrets — never commit your API key
 .env
 
-# Local data cache (can be large; regenerate with `node ingest.mjs`)
+# Local data cache — the live pull (large; regenerate with `node ingest.mjs`).
+# sample-cache.json IS committed so a fresh clone can preview offline
+# (regenerate it with `node make-sample.mjs`).
 aeroplan-cache.json
 *.cache.json
+!sample-cache.json
 
 # OS / editor cruft
 .DS_Store

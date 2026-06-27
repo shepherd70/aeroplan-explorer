@@ -77,6 +77,14 @@
   .badge.sweet { background: var(--good); color: #05210f; font-weight: 600; }
   .badge.direct { background: #1e3a5f; color: var(--accent); }
   .badge.afford { background: var(--accent2); color: #2a1a02; font-weight: 600; }
+  .badge.new { background: var(--accent); color: #04222e; font-weight: 600; }
+  .spark { vertical-align: middle; }
+  .spark path { fill: none; stroke: var(--muted); stroke-width: 1.2; }
+  .spark circle { fill: var(--accent); }
+  .tdrop { color: var(--good); font-weight: 600; }
+  .trise { color: var(--bad); }
+  .watch { cursor: pointer; color: var(--muted); user-select: none; }
+  .watch.on { color: var(--accent2); }
   .muted { color: var(--muted); }
   .num { font-variant-numeric: tabular-nums; }
 
@@ -169,6 +177,8 @@
     <button data-tab="sweet">Sweet-spot value finder</button>
     <button data-tab="grid">Flexible date grid</button>
     <button data-tab="afford">What can I book now?</button>
+    <button data-tab="rt">Round trips</button>
+    <button data-tab="watch">Watchlist</button>
   </nav>
 
   <main>
@@ -217,6 +227,28 @@
       <div id="affordCards" class="cards"></div>
       <div id="affordTable"></div>
     </section>
+
+    <section class="view" id="view-rt">
+      <div class="controls-row">
+        <div class="field"><label>From (home)</label><select id="rtOrigin"></select></div>
+        <div class="field"><label>To (destination)</label><select id="rtDest"></select></div>
+        <div class="field"><label>Cabin</label><select id="rtCabin"></select></div>
+        <div class="field"><label>Min nights</label><input type="number" id="rtMin" min="0" value="3"></div>
+        <div class="field"><label>Max nights</label><input type="number" id="rtMax" min="1" value="21"></div>
+        <div class="field"><label>Sort by</label><select id="rtSort">
+          <option value="totalMiles">Fewest total points</option>
+          <option value="cpp">Best ¢/pt</option>
+          <option value="nights">Shortest trip</option>
+          <option value="dateOut">Outbound date</option>
+        </select></div>
+        <span class="hint" id="rtInfo"></span>
+      </div>
+      <div id="rtBody"></div>
+    </section>
+
+    <section class="view" id="view-watch">
+      <div id="watchBody"></div>
+    </section>
   </main>
 </div>
 
@@ -224,11 +256,14 @@
   <h2>No data loaded yet</h2>
   <p>Run the ingester to fetch Aeroplan availability, then open the cache file here.</p>
   <p>1. Put your key in <code>.env</code> &nbsp; 2. <code>node ingest.mjs</code> &nbsp; 3. open <code>aeroplan-cache.json</code></p>
-  <p style="margin-top:20px"><button class="primary" id="openBtn2">Open aeroplan-cache.json…</button></p>
+  <p class="hint">Just looking around? Open the bundled <code>sample-cache.json</code> — no key needed.</p>
+  <p style="margin-top:20px"><button class="primary" id="openBtn2">Open cache file…</button></p>
 </div>
 
 <input type="file" id="fileFallback" accept=".json,application/json" style="display:none" />
 
+<!-- Pure data transforms (testable in Node, classic script so file:// still works). -->
+<script src="lib/explore.js"></script>
 <script>
 "use strict";
 
@@ -334,8 +369,10 @@ const CABIN_NAME = { Y:"Economy", W:"Premium", J:"Business", F:"First" };
 // --- App state --------------------------------------------------------------
 let DATA = null, RECORDS = [];
 let cashFares = {};            // "ORIG-DEST-CABIN" -> cash $ (for cpp), persisted
+let watches = {};              // "ORIG-DEST-CABIN" -> { target } watched routes, persisted
 const SETTINGS_KEY = "aeroplan-explorer-settings-v1";
 const FARES_KEY = "aeroplan-explorer-fares-v1";
+const WATCHES_KEY = "aeroplan-explorer-watches-v1";
 let settings = loadSettings();
 let fileHandle = null;
 const sortState = { discover: settings.sortDiscover, afford: settings.sortAfford }; // persisted via settings
@@ -355,14 +392,17 @@ async function idbGet(k) { const db = await idb(); return new Promise((res,rej)=
 // --- Settings persistence ---------------------------------------------------
 function loadSettings() {
   const def = { home:[], cabins:["Y","W","J","F"], start:"", end:"", seats:0, maxMiles:0, balance:0, direct:false, afford:false,
-    roundTrip:false, pointValue:0,
-    sortDiscover:{key:"cheapest",dir:1}, sortAfford:{key:"miles",dir:1}, sortSweet:"mpm" };
+    roundTrip:false, pointValue:0, rtMinNights:3, rtMaxNights:21,
+    sortDiscover:{key:"cheapest",dir:1}, sortAfford:{key:"miles",dir:1}, sortSweet:"mpm", sortRT:"totalMiles" };
   try { return Object.assign(def, JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}")); }
   catch { return def; }
 }
 function saveSettings() { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
 function loadFares() { try { return JSON.parse(localStorage.getItem(FARES_KEY) || "{}"); } catch { return {}; } }
 function saveFares() { localStorage.setItem(FARES_KEY, JSON.stringify(cashFares)); }
+function loadWatches() { try { return JSON.parse(localStorage.getItem(WATCHES_KEY) || "{}"); } catch { return {}; } }
+function saveWatches() { localStorage.setItem(WATCHES_KEY, JSON.stringify(watches)); }
+function toggleWatch(key) { if (watches[key]) delete watches[key]; else watches[key] = { target: null }; saveWatches(); renderSweet(); renderWatch(); }
 
 // --- Loading the cache ------------------------------------------------------
 async function openWithPicker() {
@@ -419,39 +459,41 @@ function colorFor(t) { // t in [0,1], 0=best(green) 1=worst(red)
   const h = 120 * (1 - Math.max(0, Math.min(1, t)));
   return `hsl(${h} 65% 42%)`;
 }
+// Inline sparkline of a points-history series (0 = unavailable at that ingest -> a gap).
+function sparkline(vals, w = 58, h = 14) {
+  const pts = vals.map((v, i) => ({ i, v })).filter((p) => p.v > 0);
+  if (pts.length < 2) return "";
+  const xs = Math.max(1, vals.length - 1);
+  const mn = Math.min(...pts.map((p) => p.v)), mx = Math.max(...pts.map((p) => p.v));
+  const X = (i) => (i / xs) * (w - 2) + 1, Y = (v) => mx > mn ? (h - 1) - ((v - mn) / (mx - mn)) * (h - 2) : h / 2;
+  const d = pts.map((p, j) => `${j ? "L" : "M"}${X(p.i).toFixed(1)} ${Y(p.v).toFixed(1)}`).join(" ");
+  const last = pts[pts.length - 1];
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><path d="${d}"/><circle cx="${X(last.i).toFixed(1)}" cy="${Y(last.v).toFixed(1)}" r="1.5"/></svg>`;
+}
+function trendBadge(tr) {
+  if (!tr) return "";
+  if (tr.isNew) return '<span class="badge new">NEW</span>';
+  if (tr.dropped) return `<span class="tdrop" title="cheaper by ${fmt(-tr.deltaMiles)} since last pull">▼ ${fmt(-tr.deltaMiles)}</span>`;
+  if (tr.rose) return `<span class="trise" title="up ${fmt(tr.deltaMiles)} since last pull">▲ ${fmt(tr.deltaMiles)}</span>`;
+  return "";
+}
+// A "Trend" table cell for a route+cabin history key (sparkline + change badge).
+function trendCell(key) {
+  const tr = DATA.history ? Explore.historyTrend(DATA.history[key]) : null;
+  if (!tr) return '<td class="l muted">—</td>';
+  const sp = sparkline(tr.spark), badge = trendBadge(tr);
+  return `<td class="l">${sp}${sp && badge ? " " : ""}${badge || (sp ? "" : '<span class="muted">—</span>')}</td>`;
+}
 function activeCabins() { return CABINS.filter((X) => settings.cabins.includes(X)); }
 const tripMult = () => settings.roundTrip ? 2 : 1;          // round-trip ≈ 2× one-way points
 const TL = () => settings.roundTrip ? "round trip" : "1-way"; // trip-type label for affordability
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 
-// A record's cabins that pass ALL active filters; returns [{cabin, ...cabinData}]
-function qualifyingCabins(rec) {
-  const out = [];
-  for (const X of activeCabins()) {
-    const c = rec.cabins?.[X];
-    if (!c || !c.available || !(c.miles > 0)) continue;
-    if (settings.direct && !c.direct) continue;
-    if (settings.seats > 0 && c.seats < settings.seats) continue;
-    if (settings.maxMiles > 0 && c.miles > settings.maxMiles) continue;
-    if (settings.afford && !(settings.balance > 0 && c.miles * tripMult() <= settings.balance)) continue;
-    out.push({ cabin: X, ...c });
-  }
-  return out;
-}
-function filtered() {
-  const home = settings.home;
-  const s = settings.start, e = settings.end;
-  const out = [];
-  for (const r of RECORDS) {
-    if (home.length && !home.includes(r.origin)) continue;
-    if (s && r.date < s) continue;
-    if (e && r.date > e) continue;
-    const q = qualifyingCabins(r);
-    if (!q.length) continue;
-    out.push({ rec: r, q });
-  }
-  return out;
-}
+// Pure data transforms live in lib/explore.js (the Explore.* namespace); these thin
+// wrappers bind them to the app's current RECORDS / settings / fares so the render
+// code below is unchanged.
+const filtered = () => Explore.filtered(RECORDS, settings);
+const qualifyingCabins = (rec) => Explore.qualifyingCabins(rec, settings);
 
 // --- Render: dispatcher -----------------------------------------------------
 function renderAll() {
@@ -461,33 +503,13 @@ function renderAll() {
   renderGridControls();
   renderGrid();
   renderAfford();
+  renderRTControls();
+  renderRT();
+  renderWatch();
 }
 
 // === View 1: Destination discovery =========================================
-function discoverRows() {
-  const byDest = new Map();
-  for (const { rec, q } of filtered()) {
-    let d = byDest.get(rec.destination);
-    if (!d) {
-      d = { destination: rec.destination, region: rec.destinationRegion, distance: rec.distance,
-            dates: new Set(), direct: false, cab: { Y:Infinity, W:Infinity, J:Infinity, F:Infinity },
-            bestOrigin: null, bestMiles: Infinity };
-      byDest.set(rec.destination, d);
-    }
-    d.dates.add(rec.date);
-    if (rec.distance && !d.distance) d.distance = rec.distance;
-    for (const c of q) {
-      if (c.miles < d.cab[c.cabin]) d.cab[c.cabin] = c.miles;
-      if (c.miles < d.bestMiles) { d.bestMiles = c.miles; d.bestOrigin = rec.origin; }
-      if (c.direct) d.direct = true;
-    }
-  }
-  const rows = [...byDest.values()].map((d) => {
-    const cheapest = Math.min(...CABINS.map((X) => d.cab[X]));
-    return { ...d, dateCount: d.dates.size, cheapest: isFinite(cheapest) ? cheapest : null };
-  });
-  return rows;
-}
+const discoverRows = () => Explore.discoverRows(RECORDS, settings);
 function renderDiscover() {
   const rows = discoverRows();
   $("discoverCount").textContent = rows.length + " destination" + (rows.length === 1 ? "" : "s");
@@ -589,46 +611,9 @@ function renderMap(rows) {
 }
 
 // === View 2: Sweet-spot value finder =======================================
-function sweetRows() {
-  const today = localToday(); // align cpp denominator with the future dates enrich-fares prices
-  const byTriple = new Map();
-  for (const { rec, q } of filtered()) {
-    if (rec.date < today) continue;
-    for (const c of q) {
-      const k = `${rec.origin}-${rec.destination}-${c.cabin}`;
-      let row = byTriple.get(k);
-      if (!row) { row = { origin: rec.origin, destination: rec.destination, cabin: c.cabin, region: `${rec.originRegion}→${rec.destinationRegion}`,
-        regionKey: `${rec.originRegion}|${rec.destinationRegion}|${c.cabin}`, distance: rec.distance, miles: Infinity, seats: 0, direct: false, airlines: "" };
-        byTriple.set(k, row); }
-      if (c.miles < row.miles) { row.miles = c.miles; row.seats = c.seats; row.direct = c.direct; row.airlines = c.airlines; }
-      if (rec.distance && !row.distance) row.distance = rec.distance;
-    }
-  }
-  const rows = [...byTriple.values()];
-  for (const r of rows) {
-    r.mpm = r.distance > 0 ? r.miles / r.distance * 1000 : null;
-    r.fareKey = `${r.origin}-${r.destination}-${r.cabin}`;
-    const auto = (DATA.cashFares || {})[r.fareKey];   // auto fare from enrich-fares.mjs
-    const fare = cashFares[r.fareKey] ?? auto;          // manual entry overrides auto
-    r.fareValue = fare ?? null;
-    r.fareAuto = cashFares[r.fareKey] == null && auto != null;
-    r.cpp = fare > 0 && r.miles > 0 ? fare * 100 / r.miles : null; // cents per point
-    r.estValue = settings.pointValue > 0 ? r.miles * settings.pointValue / 100 : null; // $ value at your valuation
-    r.beatsValuation = r.cpp != null && settings.pointValue > 0 ? r.cpp >= settings.pointValue : null;
-  }
-  // Sweet spot = in the cheapest ~25% of points-per-mile for its region pair + cabin.
-  // Thin groups (< MIN_GROUP routes) are never flagged — a quantile would be meaningless.
-  const MIN_GROUP = 5, QUANTILE = 0.25;
-  const groups = {};
-  for (const r of rows) if (r.mpm != null) (groups[r.regionKey] ||= []).push(r.mpm);
-  const cutoff = {};
-  for (const k in groups) {
-    const a = groups[k].sort((x, y) => x - y);
-    cutoff[k] = a.length < MIN_GROUP ? -Infinity : a[Math.max(0, Math.ceil(a.length * QUANTILE) - 1)];
-  }
-  for (const r of rows) r.sweet = r.mpm != null && r.mpm <= cutoff[r.regionKey];
-  return rows;
-}
+const sweetRows = () => Explore.sweetRows(RECORDS, settings,
+  { autoFares: DATA.cashFares || {}, manualFares: cashFares, today: localToday(),
+    faresCurrency: DATA.meta?.fares?.currency || "" });
 function renderSweet() {
   const rows = sweetRows();
   const sortBy = settings.sortSweet;
@@ -641,19 +626,21 @@ function renderSweet() {
   rows.sort(cmp);
   let h = `<div class="tablewrap"><table><thead><tr>
     <th class="l">Route</th><th class="l">Cabin</th><th class="l">Region</th><th>Distance</th>
-    <th>Points</th><th>Pts/1000mi</th><th>Seats</th><th class="l">Cash $ (opt)</th><th>¢/pt</th><th>Est $</th><th class="l">Value</th></tr></thead><tbody>`;
+    <th>Points</th><th class="l">Trend</th><th>Pts/1000mi</th><th>Seats</th><th>Taxes</th><th class="l">Cash $ (opt)</th><th>¢/pt</th><th>Est $</th><th class="l">Value</th></tr></thead><tbody>`;
   const mpms = rows.map((r) => r.mpm).filter((x) => x != null);
   const mn = Math.min(...mpms), mx = Math.max(...mpms);
   for (const r of rows) {
     const t = r.mpm != null && mx > mn ? (r.mpm - mn) / (mx - mn) : null;
-    h += `<tr><td class="l"><b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}</td>
+    h += `<tr><td class="l"><span class="watch${watches[r.fareKey] ? " on" : ""}" data-watch="${esc(r.fareKey)}" title="Watch this route">${watches[r.fareKey] ? "★" : "☆"}</span> <b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}</td>
       <td class="l">${cabinLabel(r.cabin)}</td><td class="l muted">${esc(r.region)}</td>
       <td class="num">${r.distance ? fmt(r.distance) : "—"}</td>
       <td class="miles num">${fmt(r.miles)}</td>
+      ${trendCell(r.fareKey)}
       <td class="num" style="background:${colorFor(t)};color:${t!=null?'#04140a':'inherit'}">${r.mpm != null ? r.mpm.toFixed(0) : "—"}</td>
       <td class="num">${r.seats || "—"}</td>
+      <td class="num" title="${r.taxes != null ? "$" + r.taxes.toFixed(2) + " " + esc(r.taxesCurrency) + " taxes &amp; carrier surcharges on the award" : "Re-run node ingest.mjs to capture taxes"}">${r.taxes != null ? "$" + fmt(r.taxes) : "—"}</td>
       <td class="l"><input type="number" min="0" step="50" value="${r.fareValue ?? ""}" data-fare="${esc(r.fareKey)}" class="fareinp${r.fareAuto ? " auto" : ""}" title="${r.fareAuto ? "Auto cash fare from Amadeus — type to override, clear to revert" : ""}"></td>
-      <td class="num" style="${r.beatsValuation===true?'color:var(--good);font-weight:600':r.beatsValuation===false?'color:var(--bad)':''}">${r.cpp != null ? r.cpp.toFixed(2) : "—"}</td>
+      <td class="num" title="${r.cpp == null ? "" : r.cppIsNet ? "net of $" + r.taxes.toFixed(2) + " " + esc(r.taxesCurrency) + " award taxes" : "gross — taxes not netted (different currency or not yet captured)"}" style="${r.beatsValuation===true?'color:var(--good);font-weight:600':r.beatsValuation===false?'color:var(--bad)':''}">${r.cpp != null ? r.cpp.toFixed(2) : "—"}</td>
       <td class="num">${r.estValue != null ? "$" + fmt(r.estValue) : "—"}</td>
       <td class="l">${r.sweet ? '<span class="badge sweet">sweet spot</span>' : ""}</td></tr>`;
   }
@@ -661,11 +648,15 @@ function renderSweet() {
   const fm = DATA.meta?.fares;
   const fmDate = fm?.updatedAt ? fm.updatedAt.slice(0, 10) : "";
   const status = fm
-    ? `<p class="hint">Auto cash fares: <b>${fm.count}</b> routes in ${esc(fm.currency || "")}${fmDate ? `, updated ${fmDate}` : ""}${fm.pricedThisRun != null ? ` (${fm.pricedThisRun} re-priced last run)` : ""}. ¢/pt &amp; Est $ use this currency. Type in any Cash $ cell to override; clear it to revert to the auto fare.</p>`
+    ? `<p class="hint">Auto cash fares: <b>${fm.count}</b> routes in ${esc(fm.currency || "")}${fmDate ? `, updated ${fmDate}` : ""}${fm.pricedThisRun != null ? ` (${fm.pricedThisRun} re-priced last run)` : ""}. <b>¢/pt is net of the award’s taxes</b> when the fare &amp; tax share a currency (hover a ¢/pt cell to check); Est $ uses your point value. Type in any Cash $ cell to override; clear it to revert to the auto fare.</p>`
     : "";
-  $("sweetTable").innerHTML = status + h;
+  let nNew = 0, nDrop = 0;
+  if (DATA.history) for (const r of rows) { const tr = Explore.historyTrend(DATA.history[r.fareKey]); if (tr) { if (tr.isNew) nNew++; else if (tr.dropped) nDrop++; } }
+  const histNote = DATA.history ? `<p class="hint">Since the previous pull: <b>${nNew}</b> newly available, <b>${nDrop}</b> cheaper. The <b>Trend</b> column shows each route's cheapest-points history.</p>` : "";
+  $("sweetTable").innerHTML = status + histNote + h;
   $("sweetTable").querySelectorAll("input[data-fare]").forEach((inp) =>
     inp.onchange = () => { const v = parseFloat(inp.value); if (v > 0) cashFares[inp.dataset.fare] = v; else delete cashFares[inp.dataset.fare]; saveFares(); renderSweet(); });
+  $("sweetTable").querySelectorAll("[data-watch]").forEach((el) => el.onclick = () => toggleWatch(el.dataset.watch));
 }
 
 // === View 3: Flexible date grid ============================================
@@ -719,7 +710,7 @@ function renderGrid() {
     if (c && c.available && c.miles > 0) {
       if (settings.direct && !c.direct) continue;
       if (settings.seats > 0 && c.seats < settings.seats) continue;
-      if (!byDate[r.date] || c.miles < byDate[r.date].miles) byDate[r.date] = c;
+      if (!byDate[r.date] || c.miles < byDate[r.date].miles) byDate[r.date] = { ...c, _cur: r.taxesCurrency || "" };
     }
   }
   const dates = Object.keys(byDate);
@@ -754,7 +745,7 @@ function renderGrid() {
         const t = mx > mn ? (c.miles - mn) / (mx - mn) : 0;
         const aff = settings.balance > 0 && c.miles * tripMult() <= settings.balance;
         const k = c.miles >= 1000 ? Math.round(c.miles / 1000) + "k" : c.miles;
-        html += `<div class="cell has" style="background:${colorFor(t)}" title="${ds}: ${fmt(c.miles)} pts · ${c.seats || "?"} seats${c.direct ? " · nonstop" : ""}${c.airlines ? " · " + esc(c.airlines) : ""}">
+        html += `<div class="cell has" style="background:${colorFor(t)}" title="${ds}: ${fmt(c.miles)} pts${c.taxes != null ? " + $" + fmt(c.taxes / 100) + (c._cur ? " " + esc(c._cur) : "") + " taxes" : ""} · ${c.seats || "?"} seats${c.direct ? " · nonstop" : ""}${c.airlines ? " · " + esc(c.airlines) : ""}">
           <span class="d">${day}</span><span class="m">${k}${aff ? "✓" : ""}</span></div>`;
       } else {
         html += `<div class="cell empty"><span class="d">${day}</span></div>`;
@@ -775,21 +766,8 @@ function renderAfford() {
   }
   const bal = settings.balance;
   const mult = tripMult(); // 1 = one-way, 2 = round trip (≈2× one-way points)
-  // Per-cabin reachable destinations (cheapest per origin-dest-cabin within balance)
-  const reach = { Y:new Set(), W:new Set(), J:new Set(), F:new Set() };
-  const anyDest = new Set();
-  const list = [];
-  const seen = new Map();
-  for (const { rec, q } of filtered()) {
-    for (const c of q) {
-      if (c.miles * mult > bal) continue;
-      reach[c.cabin].add(rec.destination); anyDest.add(rec.destination);
-      const k = `${rec.origin}-${rec.destination}-${c.cabin}`;
-      const prev = seen.get(k);
-      if (!prev) { const row = { origin: rec.origin, destination: rec.destination, cabin: c.cabin, miles: c.miles, dates: new Set([rec.date]), direct: c.direct, distance: rec.distance }; seen.set(k, row); list.push(row); }
-      else { prev.dates.add(rec.date); if (c.miles < prev.miles) { prev.miles = c.miles; prev.direct = c.direct; } }
-    }
-  }
+  // Reachable destinations + cheapest option per origin-dest-cabin within balance.
+  const { reach, anyDest, list } = Explore.affordRows(RECORDS, settings);
   cont.innerHTML =
     card(fmt(bal), "points balance") +
     card(anyDest.size, "destinations (" + TL() + ")") +
@@ -797,17 +775,18 @@ function renderAfford() {
 
   const { key, dir } = sortState.afford;
   list.forEach((r) => r.dateCount = r.dates.size);
-  const val = (r) => key === "miles" ? r.miles : key === "dateCount" ? r.dateCount : key === "left" ? bal - r.miles * mult : r[key];
+  const val = (r) => key === "miles" ? r.miles : key === "dateCount" ? r.dateCount : key === "left" ? bal - r.miles * mult : key === "taxes" ? (r.taxes ?? Infinity) : r[key];
   list.sort((a, b) => { const x = val(a), y = val(b); return (typeof x === "string" ? x.localeCompare(y) : x - y) * dir; });
   const th = (k, label, cls = "") => `<th class="${cls} ${key === k ? "sorted" : ""}" data-k="${k}">${label}${key === k ? (dir > 0 ? " ▲" : " ▼") : ""}</th>`;
   let h = `<div class="tablewrap"><table><thead><tr>
-    ${th("origin","From","l")}${th("destination","To","l")}${th("cabin","Cabin","l")}${th("miles","Points (" + TL() + ")")}${th("left","Left (" + TL() + ")")}${th("dateCount","Dates")}<th class="l">Nonstop</th></tr></thead><tbody>`;
+    ${th("origin","From","l")}${th("destination","To","l")}${th("cabin","Cabin","l")}${th("miles","Points (" + TL() + ")")}${th("taxes","Taxes")}${th("left","Left (" + TL() + ")")}${th("dateCount","Dates")}<th class="l">Nonstop</th></tr></thead><tbody>`;
   const caveat = settings.roundTrip
-    ? `<p class="hint">Points shown are <b>round trip</b> (≈2× the one-way award) and still exclude cash taxes &amp; carrier surcharges. Aeroplan prices each direction separately, so the real total can differ — confirm both legs.</p>`
-    : `<p class="hint">Points shown are <b>one-way</b> per direction and exclude cash taxes &amp; carrier surcharges (which points can’t cover). Tick <b>Round trip</b> above to compare against ≈2× the points.</p>`;
+    ? `<p class="hint">Points shown are <b>round trip</b> (≈2× the one-way award); the <b>Taxes</b> column is the cash you still pay on top (shown ≈2× too — per-direction surcharges differ, so confirm both legs). Aeroplan prices each direction separately.</p>`
+    : `<p class="hint">Points shown are <b>one-way</b> per direction; the <b>Taxes</b> column is the cash you still pay on top (points can’t cover it). Tick <b>Round trip</b> above to compare against ≈2× the points.</p>`;
   for (const r of list) {
     h += `<tr><td class="l">${esc(r.origin)}</td><td class="l"><b>${esc(r.destination)}</b> <span class="muted">${esc(AIRPORTS[r.destination]?.[2] || "")}</span></td>
       <td class="l">${cabinLabel(r.cabin)}</td><td class="miles num">${fmt(r.miles * mult)}</td>
+      <td class="num" title="${r.taxes != null ? esc(r.taxesCurrency) + " award taxes" + (mult > 1 ? " ×" + mult + " (est.)" : "") : "re-ingest to capture taxes"}">${r.taxes != null ? "$" + fmt(r.taxes * mult) : "—"}</td>
       <td class="num">${fmt(bal - r.miles * mult)}</td><td class="num">${r.dateCount}</td>
       <td class="l">${r.direct ? '<span class="badge direct">nonstop</span>' : ""}</td></tr>`;
   }
@@ -818,6 +797,119 @@ function renderAfford() {
     el.onclick = () => { const k = el.dataset.k; const st = sortState.afford; st.dir = st.key === k ? -st.dir : 1; st.key = k; saveSettings(); renderAfford(); });
 }
 function card(big, lbl) { return `<div class="card"><div class="big">${big}</div><div class="lbl">${lbl}</div></div>`; }
+
+// === View 5: Round trips (real outbound + return pairing) ===================
+function renderRTControls() {
+  const origins = [...new Set(RECORDS.map((r) => r.origin))].sort();
+  const oSel = $("rtOrigin");
+  const curO = oSel.value || settings.home[0] || origins[0];
+  oSel.innerHTML = origins.map((o) => `<option ${o === curO ? "selected" : ""}>${esc(o)}</option>`).join("");
+  updateRTDests();
+  const cSel = $("rtCabin");
+  const curC = cSel.value || activeCabins()[0] || "J";
+  cSel.innerHTML = CABINS.map((X) => `<option value="${X}" ${X === curC ? "selected" : ""}>${cabinLabel(X)}</option>`).join("");
+  $("rtMin").value = settings.rtMinNights;
+  $("rtMax").value = settings.rtMaxNights;
+}
+function updateRTDests() {
+  const o = $("rtOrigin").value;
+  const dests = [...new Set(RECORDS.filter((r) => r.origin === o).map((r) => r.destination))].sort();
+  const dSel = $("rtDest");
+  const cur = dSel.value;
+  dSel.innerHTML = dests.map((d) => `<option ${d === cur ? "selected" : ""}>${esc(d)}${AIRPORTS[d] ? " — " + esc(AIRPORTS[d][2]) : ""}</option>`).join("");
+  [...dSel.options].forEach((op) => op.value = op.textContent.split(" — ")[0]);
+  if (cur && dests.includes(cur)) dSel.value = cur;
+}
+function renderRT() {
+  if (!DATA) return;
+  const origin = $("rtOrigin").value, dest = $("rtDest").value, cabin = $("rtCabin").value;
+  const res = Explore.roundTripRows(RECORDS, settings, {
+    origin, dest, cabin, minNights: settings.rtMinNights, maxNights: settings.rtMaxNights,
+    autoFares: DATA.cashFares || {}, manualFares: cashFares,
+    faresCurrency: DATA.meta?.fares?.currency || "", today: localToday(),
+  });
+  const info = $("rtInfo");
+  if (!res.hasReturnData) {
+    info.textContent = "";
+    $("rtBody").innerHTML = res.hasOutboundData
+      ? `<div class="empty-state" style="padding:50px 20px"><h2>No return availability for ${esc(dest)}→${esc(origin)}</h2>
+         <p>This cache has the outbound leg but not the return. Pull returns by setting
+         <code>pullReturns: true</code> in <code>ingest.mjs</code> (or <code>originRegions: []</code>), re-run it, then hit <b>↻ Reload</b>.</p></div>`
+      : `<div class="empty-state" style="padding:50px 20px"><h2>No ${cabinLabel(cabin)} availability ${esc(origin)}→${esc(dest)}</h2>
+         <p>Pick another route or cabin, or widen the date window in the filters.</p></div>`;
+    return;
+  }
+  const cmp = {
+    totalMiles: (a, b) => a.totalMiles - b.totalMiles,
+    cpp: (a, b) => (b.cpp ?? -1) - (a.cpp ?? -1),
+    nights: (a, b) => a.nights - b.nights,
+    dateOut: (a, b) => (a.dateOut < b.dateOut ? -1 : a.dateOut > b.dateOut ? 1 : 0),
+  }[settings.sortRT] || ((a, b) => a.totalMiles - b.totalMiles);
+  const rows = res.rows.slice().sort(cmp);
+  const bal = settings.balance;
+  const curHdr = rows.find((r) => r.taxesCurrency)?.taxesCurrency || "";
+  info.textContent = `${rows.length} round trip${rows.length === 1 ? "" : "s"} ${origin}⇄${dest} · ${cabinLabel(cabin)} · ${settings.rtMinNights}–${settings.rtMaxNights} nights`;
+  const milesVals = rows.map((r) => r.totalMiles);
+  const mn = Math.min(...milesVals), mx = Math.max(...milesVals);
+  let h = `<div class="tablewrap"><table><thead><tr>
+    <th class="l">Outbound</th><th class="l">Return</th><th>Nights</th><th>Out pts</th><th>Ret pts</th><th>Total pts</th>
+    <th>Taxes${curHdr ? " (" + esc(curHdr) + ")" : ""}</th><th>RT ¢/pt</th><th class="l">Fits balance</th></tr></thead><tbody>`;
+  for (const r of rows) {
+    const t = mx > mn ? (r.totalMiles - mn) / (mx - mn) : 0;
+    const fits = bal > 0 && r.totalMiles <= bal;
+    h += `<tr>
+      <td class="l">${r.dateOut}${r.directOut ? ' <span class="badge direct">nonstop</span>' : ""}</td>
+      <td class="l">${r.dateRet}${r.directRet ? ' <span class="badge direct">nonstop</span>' : ""}</td>
+      <td class="num">${r.nights}</td>
+      <td class="num">${fmt(r.milesOut)}</td>
+      <td class="num">${fmt(r.milesRet)}</td>
+      <td class="miles num" style="background:${colorFor(t)};color:#04140a">${fmt(r.totalMiles)}</td>
+      <td class="num" title="${r.totalTaxes != null ? "outbound $" + r.taxesOut.toFixed(2) + " + return $" + r.taxesRet.toFixed(2) : "taxes not captured for one or both legs"}">${r.totalTaxes != null ? "$" + fmt(r.totalTaxes) : "—"}</td>
+      <td class="num" title="${r.cpp == null ? "add a cash fare on both legs (Sweet-spot tab) for ¢/pt" : r.cppIsNet ? "net of $" + fmt(r.totalTaxes) + " " + esc(r.taxesCurrency) + " taxes" : "gross — taxes not netted"}">${r.cpp != null ? r.cpp.toFixed(2) : "—"}</td>
+      <td class="l">${bal > 0 ? (fits ? '<span class="badge afford">within balance</span>' : `<span class="muted">${fmt(r.totalMiles - bal)} over</span>`) : '<span class="muted">set balance</span>'}</td></tr>`;
+  }
+  h += `</tbody></table></div>
+    <p class="hint">Each row pairs an outbound date with the cheapest-points return ${settings.rtMinNights}–${settings.rtMaxNights} nights later. Points &amp; taxes are the real total of both legs; Aeroplan still prices each direction separately at booking, so confirm both. RT ¢/pt uses the two one-way cash fares when present.</p>`;
+  $("rtBody").innerHTML = h;
+}
+
+// === Watchlist (starred routes + optional points targets) ==================
+function renderWatch() {
+  if (!DATA) return;
+  const list = Explore.watchList(RECORDS, DATA.history || null, watches);
+  if (!list.length) {
+    $("watchBody").innerHTML = `<div class="empty-state" style="padding:50px 20px"><h2>No watched routes yet</h2>
+      <p>Click the ☆ next to any route in the <b>Sweet-spot value finder</b> to watch it. Set a points target here and the explorer flags when it's bookable under target — and whether it dropped since your last pull.</p></div>`;
+    return;
+  }
+  // met (under target) first, then available, then unavailable; cheapest first within a group.
+  const rank = (w) => (w.underTarget ? 0 : w.available ? 1 : 2);
+  list.sort((a, b) => rank(a) - rank(b) || (a.current ?? Infinity) - (b.current ?? Infinity));
+  const nAvail = list.filter((w) => w.available).length;
+  const nUnder = list.filter((w) => w.underTarget).length;
+  let h = `<p class="hint"><b>${list.length}</b> watched · <b>${nAvail}</b> available now · <b>${nUnder}</b> under target. Stars and targets are saved in this browser.</p>
+    <div class="tablewrap"><table><thead><tr>
+    <th class="l">★</th><th class="l">Route</th><th class="l">Cabin</th><th>Cheapest now</th><th class="l">Target pts</th><th class="l">Status</th><th class="l">Trend</th></tr></thead><tbody>`;
+  for (const w of list) {
+    const status = !w.available ? '<span class="muted">unavailable</span>'
+      : w.underTarget === true ? '<span class="badge afford">under target</span>'
+      : w.underTarget === false ? `<span class="muted">${fmt(w.current - w.target)} over</span>`
+      : '<span class="badge direct">available</span>';
+    h += `<tr>
+      <td class="l"><span class="watch on" data-watch="${esc(w.key)}" title="Unwatch">★</span></td>
+      <td class="l"><b>${esc(w.origin)}→${esc(w.dest)}</b> <span class="muted">${esc(AIRPORTS[w.dest]?.[2] || "")}</span></td>
+      <td class="l">${cabinLabel(w.cabin)}</td>
+      <td class="miles num">${w.current != null ? fmt(w.current) : "—"}</td>
+      <td class="l"><input type="number" min="0" step="1000" value="${w.target ?? ""}" data-wtarget="${esc(w.key)}" class="fareinp" placeholder="any" title="Flag when the cheapest is at or below this"></td>
+      <td class="l">${status}</td>
+      ${trendCell(w.key)}</tr>`;
+  }
+  h += `</tbody></table></div>`;
+  $("watchBody").innerHTML = h;
+  $("watchBody").querySelectorAll("[data-watch]").forEach((el) => el.onclick = () => toggleWatch(el.dataset.watch));
+  $("watchBody").querySelectorAll("input[data-wtarget]").forEach((inp) =>
+    inp.onchange = () => { const v = parseInt(inp.value); watches[inp.dataset.wtarget] = { target: v > 0 ? v : null }; saveWatches(); renderWatch(); });
+}
 
 // --- Freshness + data-loaded -----------------------------------------------
 function setFreshness(text, warn) {
@@ -863,6 +955,7 @@ function applySettingsToUI() {
   $("fRoundTrip").checked = settings.roundTrip;
   $("fAfford").checked = settings.afford;
   $("sweetSort").value = settings.sortSweet;
+  $("rtSort").value = settings.sortRT;
 }
 function readFiltersFromUI() {
   settings.home = $("fHome").value.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
@@ -891,6 +984,7 @@ function switchTab(name) {
   $("reloadBtn").onclick = () => fileHandle ? readHandle() : openWithPicker();
   $("fileFallback").onchange = (e) => { const f = e.target.files[0]; if (f) f.text().then(ingestText); };
   cashFares = loadFares();
+  watches = loadWatches();
 
   document.querySelectorAll("nav.tabs button").forEach((b) => b.onclick = () => switchTab(b.dataset.tab));
   $("showTable").onclick = () => { $("discoverTable").style.display = ""; $("discoverMap").style.display = "none"; $("showTable").classList.add("primary"); $("showMap").classList.remove("primary"); };
@@ -905,6 +999,12 @@ function switchTab(name) {
   $("gDest").addEventListener("change", renderGrid);
   $("gCabin").addEventListener("change", renderGrid);
   $("sweetSort").addEventListener("change", () => { settings.sortSweet = $("sweetSort").value; saveSettings(); renderSweet(); });
+  $("rtOrigin").addEventListener("change", () => { updateRTDests(); renderRT(); });
+  $("rtDest").addEventListener("change", renderRT);
+  $("rtCabin").addEventListener("change", renderRT);
+  $("rtMin").addEventListener("change", () => { settings.rtMinNights = Math.max(0, parseInt($("rtMin").value) || 0); saveSettings(); renderRT(); });
+  $("rtMax").addEventListener("change", () => { settings.rtMaxNights = Math.max(1, parseInt($("rtMax").value) || 60); saveSettings(); renderRT(); });
+  $("rtSort").addEventListener("change", () => { settings.sortRT = $("rtSort").value; saveSettings(); renderRT(); });
 
   restoreHandle();
 })();
