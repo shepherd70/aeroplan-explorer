@@ -39,7 +39,7 @@ const CONFIG = {
   pullReturns: false,
 
   take: 1000,                    // page size (10–1000). Bigger = fewer calls.
-  maxPagesPerRegion: 60,         // safety cap so a bad loop can't drain your quota
+  maxPagesPerRegion: 200,        // backstop against a runaway loop; quotaFloor is the real guard
   maxRetries: 4,                 // retries on 429/5xx (exponential backoff, honors Retry-After)
   pauseMs: 300,                  // polite delay between page requests
   quotaFloor: 25,               // stop early if remaining daily calls drops below this
