@@ -123,7 +123,10 @@ remaining-calls header, prints it as it goes, and stops before draining it.
    destination to jump to its date grid.
 2. **Sweet-spot value finder** — ranks routes by points-per-1000-miles and flags the
    cheapest ~25% within each region-pair + cabin as "sweet spots" (thin groups of <5
-   routes aren't flagged). A **Taxes** column shows the award's cash taxes & surcharges, and
+   routes aren't flagged). Every row carries its date context: **Cheapest on** is the
+   departure date the lowest price flies (+n when more dates share it) and **Dates** counts
+   the departure dates with any availability in your window — click a row to jump to its
+   full date-grid calendar. A **Taxes** column shows the award's cash taxes & surcharges, and
    pasting a cash fare on any row gives true, tax-honest ¢-per-point. Set a **Point value ¢**
    in the filters to see each award's estimated $ value and flag fares that beat your
    valuation (the ¢/pt cell turns green). A **Trend** column sparklines each route's
@@ -140,8 +143,8 @@ remaining-calls header, prints it as it goes, and stops before draining it.
    combined taxes, and tax-honest round-trip ¢/pt — not the ≈2× estimate. Needs return-leg data
    in the cache (`pullReturns` above); if it's missing, the tab tells you how to pull it.
 6. **Watchlist** — star any route in the Sweet-spot finder and it lands here with its current
-   cheapest points, an optional points **target**, a status (available / under target / over),
-   and its trend since your last pull. Stars and targets are saved in your browser; the list is
+   cheapest points, how many dates are available, an optional points **target**, a status
+   (available / under target / over), and its trend since your last pull. Stars and targets are saved in your browser; the list is
    independent of the filters above.
 
 Filters at the top (home airports, cabins, dates, seats, max points, balance, point value,
