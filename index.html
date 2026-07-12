@@ -205,9 +205,11 @@
             <option value="cpp">Best value (¢ per point, needs cash $)</option>
             <option value="miles">Fewest points</option>
             <option value="distance">Longest distance</option>
+            <option value="bestDate">Soonest cheapest date</option>
+            <option value="dates">Most available dates</option>
           </select>
         </div>
-        <p class="hint">“Sweet spot” = in the cheapest ~25% of points-per-mile for that region pair &amp; cabin (groups with &lt;5 routes aren’t flagged). Add a cash fare ($) for true cents-per-point; set <b>Point value ¢</b> in the filters to see each award’s estimated $ value and flag fares that beat your valuation (green ¢/pt).</p>
+        <p class="hint">“Sweet spot” = in the cheapest ~25% of points-per-mile for that region pair &amp; cabin (groups with &lt;5 routes aren’t flagged). <b>Points</b> is the cheapest across your date window — <b>Cheapest on</b> shows when it flies (+n = more dates at that price) and <b>Dates</b> how many departure dates have any availability. Click a row to open its full date calendar. Add a cash fare ($) for true cents-per-point; set <b>Point value ¢</b> in the filters to see each award’s estimated $ value and flag fares that beat your valuation (green ¢/pt).</p>
       </div>
       <div id="sweetTable"></div>
     </section>
@@ -453,6 +455,13 @@ function ingestText(text) {
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
 const fmt = (n) => n == null || !isFinite(n) ? "—" : Math.round(n).toLocaleString();
+// "2026-10-14" -> "Oct 14" (year appended only when it isn't the current year)
+const fmtDate = (ds) => {
+  if (!ds) return "—";
+  const [y, m, d] = ds.split("-").map(Number);
+  const s = new Date(y, m - 1, d).toLocaleString("en", { month: "short", day: "numeric" });
+  return y === new Date().getFullYear() ? s : `${s} ${y}`;
+};
 const cabinLabel = (X) => CABIN_NAME[X] || X;
 function colorFor(t) { // t in [0,1], 0=best(green) 1=worst(red)
   if (t == null || !isFinite(t)) return "transparent";
@@ -622,19 +631,25 @@ function renderSweet() {
     cpp: (a, b) => (b.cpp ?? -1) - (a.cpp ?? -1),
     miles: (a, b) => a.miles - b.miles,
     distance: (a, b) => b.distance - a.distance,
+    bestDate: (a, b) => (a.bestDate || "￿").localeCompare(b.bestDate || "￿"),
+    dates: (a, b) => b.dateCount - a.dateCount,
   }[sortBy];
   rows.sort(cmp);
   let h = `<div class="tablewrap"><table><thead><tr>
     <th class="l">Route</th><th class="l">Cabin</th><th class="l">Region</th><th>Distance</th>
-    <th>Points</th><th class="l">Trend</th><th>Pts/1000mi</th><th>Seats</th><th>Taxes</th><th class="l">Cash $ (opt)</th><th>¢/pt</th><th>Est $</th><th class="l">Value</th></tr></thead><tbody>`;
+    <th>Points</th><th class="l">Cheapest on</th><th>Dates</th><th class="l">Trend</th><th>Pts/1000mi</th><th>Seats</th><th>Taxes</th><th class="l">Cash $ (opt)</th><th>¢/pt</th><th>Est $</th><th class="l">Value</th></tr></thead><tbody>`;
   const mpms = rows.map((r) => r.mpm).filter((x) => x != null);
   const mn = Math.min(...mpms), mx = Math.max(...mpms);
   for (const r of rows) {
     const t = r.mpm != null && mx > mn ? (r.mpm - mn) / (mx - mn) : null;
-    h += `<tr><td class="l"><span class="watch${watches[r.fareKey] ? " on" : ""}" data-watch="${esc(r.fareKey)}" title="Watch this route">${watches[r.fareKey] ? "★" : "☆"}</span> <b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}</td>
+    const bestTitle = `${fmt(r.miles)} pts flies on ${r.bestDates.length} date${r.bestDates.length === 1 ? "" : "s"}: ${r.bestDates.slice(0, 10).join(", ")}${r.bestDates.length > 10 ? ", …" : ""} — click for the calendar`;
+    const datesTitle = `${r.dateCount} departure date${r.dateCount === 1 ? "" : "s"} with availability, ${r.dateFirst} → ${r.dateLast} — click for the calendar`;
+    h += `<tr class="clickable" data-o="${esc(r.origin)}" data-d="${esc(r.destination)}" data-c="${r.cabin}"><td class="l"><span class="watch${watches[r.fareKey] ? " on" : ""}" data-watch="${esc(r.fareKey)}" title="Watch this route">${watches[r.fareKey] ? "★" : "☆"}</span> <b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}</td>
       <td class="l">${cabinLabel(r.cabin)}</td><td class="l muted">${esc(r.region)}</td>
       <td class="num">${r.distance ? fmt(r.distance) : "—"}</td>
       <td class="miles num">${fmt(r.miles)}</td>
+      <td class="l num" title="${esc(bestTitle)}">${fmtDate(r.bestDate)}${r.bestDates.length > 1 ? ` <span class="muted">+${r.bestDates.length - 1}</span>` : ""}</td>
+      <td class="num" title="${esc(datesTitle)}">${r.dateCount}</td>
       ${trendCell(r.fareKey)}
       <td class="num" style="background:${colorFor(t)};color:${t!=null?'#04140a':'inherit'}">${r.mpm != null ? r.mpm.toFixed(0) : "—"}</td>
       <td class="num">${r.seats || "—"}</td>
@@ -657,6 +672,9 @@ function renderSweet() {
   $("sweetTable").querySelectorAll("input[data-fare]").forEach((inp) =>
     inp.onchange = () => { const v = parseFloat(inp.value); if (v > 0) cashFares[inp.dataset.fare] = v; else delete cashFares[inp.dataset.fare]; saveFares(); renderSweet(); });
   $("sweetTable").querySelectorAll("[data-watch]").forEach((el) => el.onclick = () => toggleWatch(el.dataset.watch));
+  // Row click -> this route+cabin's full date calendar (ignore the star and fare input).
+  $("sweetTable").querySelectorAll("tr.clickable").forEach((tr) =>
+    tr.onclick = (e) => { if (e.target.closest("input,[data-watch]")) return; openGridFor(tr.dataset.o, tr.dataset.d, tr.dataset.c); });
 }
 
 // === View 3: Flexible date grid ============================================
@@ -680,22 +698,27 @@ function updateGridDestinations() {
   [...dSel.options].forEach((op) => op.value = op.textContent.split(" — ")[0]);
   if (cur && dests.includes(cur)) dSel.value = cur;
 }
-function openGridFor(origin, dest) {
+function openGridFor(origin, dest, cabin) {
   if (origin) $("gOrigin").value = origin;
   updateGridDestinations();
   if (dest) $("gDest").value = dest;
-  // Align the cabin select to the cheapest cabin that actually has availability for this
-  // route, so a clicked destination never dead-ends on "No <cabin> availability".
-  const o = $("gOrigin").value, d = $("gDest").value;
-  let best = { cabin: null, miles: Infinity };
-  for (const r of RECORDS) {
-    if (r.origin !== o || r.destination !== d) continue;
-    for (const X of CABINS) {
-      const c = r.cabins?.[X];
-      if (c && c.available && c.miles > 0 && c.miles < best.miles) best = { cabin: X, miles: c.miles };
+  if (cabin) {
+    // Caller knows the cabin (e.g. a clicked sweet-spot row) — honor it.
+    $("gCabin").value = cabin;
+  } else {
+    // Align the cabin select to the cheapest cabin that actually has availability for this
+    // route, so a clicked destination never dead-ends on "No <cabin> availability".
+    const o = $("gOrigin").value, d = $("gDest").value;
+    let best = { cabin: null, miles: Infinity };
+    for (const r of RECORDS) {
+      if (r.origin !== o || r.destination !== d) continue;
+      for (const X of CABINS) {
+        const c = r.cabins?.[X];
+        if (c && c.available && c.miles > 0 && c.miles < best.miles) best = { cabin: X, miles: c.miles };
+      }
     }
+    if (best.cabin) $("gCabin").value = best.cabin;
   }
-  if (best.cabin) $("gCabin").value = best.cabin;
   switchTab("grid");
   renderGrid();
 }
@@ -889,7 +912,7 @@ function renderWatch() {
   const nUnder = list.filter((w) => w.underTarget).length;
   let h = `<p class="hint"><b>${list.length}</b> watched · <b>${nAvail}</b> available now · <b>${nUnder}</b> under target. Stars and targets are saved in this browser.</p>
     <div class="tablewrap"><table><thead><tr>
-    <th class="l">★</th><th class="l">Route</th><th class="l">Cabin</th><th>Cheapest now</th><th class="l">Target pts</th><th class="l">Status</th><th class="l">Trend</th></tr></thead><tbody>`;
+    <th class="l">★</th><th class="l">Route</th><th class="l">Cabin</th><th>Cheapest now</th><th>Dates</th><th class="l">Target pts</th><th class="l">Status</th><th class="l">Trend</th></tr></thead><tbody>`;
   for (const w of list) {
     const status = !w.available ? '<span class="muted">unavailable</span>'
       : w.underTarget === true ? '<span class="badge afford">under target</span>'
@@ -900,6 +923,7 @@ function renderWatch() {
       <td class="l"><b>${esc(w.origin)}→${esc(w.dest)}</b> <span class="muted">${esc(AIRPORTS[w.dest]?.[2] || "")}</span></td>
       <td class="l">${cabinLabel(w.cabin)}</td>
       <td class="miles num">${w.current != null ? fmt(w.current) : "—"}</td>
+      <td class="num" title="departure dates with availability in the current cache (any filters ignored)">${w.available ? w.dates : "—"}</td>
       <td class="l"><input type="number" min="0" step="1000" value="${w.target ?? ""}" data-wtarget="${esc(w.key)}" class="fareinp" placeholder="any" title="Flag when the cheapest is at or below this"></td>
       <td class="l">${status}</td>
       ${trendCell(w.key)}</tr>`;

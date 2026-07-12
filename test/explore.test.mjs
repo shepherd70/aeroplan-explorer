@@ -89,6 +89,22 @@ test("sweetRows today filter drops past departures", () => {
   ];
   const [r] = sweetRows(recs, S(), { today: "2026-06-26" });
   assert.equal(r.miles, 70000); // cheaper past date excluded, so 70k future wins
+  assert.equal(r.dateCount, 1); // the past date doesn't count as an available date either
+});
+
+test("sweetRows carries date context: count, span, and the cheapest price's date(s)", () => {
+  const recs = [
+    rec("YVR", "NRT", "2026-09-01", { J: cab(70000) }),
+    rec("YVR", "NRT", "2026-07-05", { J: cab(58000) }),
+    rec("YVR", "NRT", "2026-08-10", { J: cab(58000) }), // same cheapest price, later date
+    rec("YVR", "NRT", "2026-07-01", { J: cab(62000) }),
+  ];
+  const [r] = sweetRows(recs, S(), { today: "2026-06-01" });
+  assert.equal(r.dateCount, 4);
+  assert.equal(r.dateFirst, "2026-07-01");
+  assert.equal(r.dateLast, "2026-09-01");
+  assert.deepEqual(r.bestDates, ["2026-07-05", "2026-08-10"]); // every date at the cheapest price
+  assert.equal(r.bestDate, r.bestDates[0]);                    // earliest of them
 });
 
 test("sweetRows flags the cheapest ~25% within a region+cabin group of >=5", () => {
@@ -296,6 +312,16 @@ test("integration: sample-cache.json yields self-consistent results", () => {
   const groupSize = {};
   for (const r of sweet) if (r.mpm != null) groupSize[r.regionKey] = (groupSize[r.regionKey] || 0) + 1;
   for (const r of sweet) if (r.sweet) assert.ok(groupSize[r.regionKey] >= 5, "sweet only in groups >=5");
+
+  // every sweet row's date context is internally consistent
+  for (const r of sweet) {
+    assert.ok(r.dateCount >= 1, "a row exists only if some date qualified");
+    assert.ok(r.dateFirst <= r.dateLast, "span is ordered");
+    assert.ok(r.bestDates.length >= 1 && r.bestDates.length <= r.dateCount);
+    assert.equal(r.bestDate, r.bestDates[0]);
+    assert.ok(r.bestDate >= r.dateFirst && r.bestDates[r.bestDates.length - 1] <= r.dateLast,
+      "cheapest dates lie inside the availability span");
+  }
 
   // affordability is monotonic in balance
   const lo = affordRows(recs, S({ balance: 40000 })).anyDest.size;
