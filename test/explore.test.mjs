@@ -372,3 +372,16 @@ test("layoverMinutes derives connection waits from segments, null without them",
   assert.deepEqual(layoverMinutes(trip({ segments: [{ flight: "AC1", from: "YYZ", to: "LHR", dep: "2026-10-11T17:40", arr: "2026-10-12T05:40" }] })), []);
   assert.equal(layoverMinutes(trip()), null);
 });
+
+test("cheapestRouting picks the cheapest itinerary for a route (optionally one cabin/date) and reports its routing", () => {
+  const { cheapestRouting } = Explore;
+  assert.deepEqual(cheapestRouting(TRIPS, "YYZ", "LHR", { cabin: "J" }),
+    { id: "fast-cheap", date: "2026-10-11", cabin: "J", stops: 1, via: ["MUC"], miles: 100000, duration: 900, flights: ["AC836", "LH2476"] });
+  assert.equal(cheapestRouting(TRIPS, "YYZ", "LHR", { cabin: "J", date: "2026-10-12" }).id, "next-day");
+  assert.equal(cheapestRouting(TRIPS, "YYZ", "LHR", { cabin: ["Y", "J"] }).id, "eco", "cabin may be a list");
+  assert.equal(cheapestRouting(TRIPS, "YYZ", "LHR", {}).id, "eco", "no cabin filter = any cabin");
+  assert.equal(cheapestRouting(TRIPS, "YYZ", "LHR", { cabin: "F" }), null);
+  assert.equal(cheapestRouting(TRIPS, "YYZ", "LHR", { cabin: "J", date: "2026-10-13" }), null);
+  assert.equal(cheapestRouting(TRIPS, "YVR", "NRT", { cabin: "J" }), null, "route never pulled");
+  assert.equal(cheapestRouting(null, "YYZ", "LHR", { cabin: "J" }), null);
+});

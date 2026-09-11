@@ -76,6 +76,7 @@
   .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--chip); color: var(--muted); }
   .badge.sweet { background: var(--good); color: #05210f; font-weight: 600; }
   .badge.direct { background: #1e3a5f; color: var(--accent); }
+  .badge.via { background: var(--chip); color: var(--text); }
   .badge.afford { background: var(--accent2); color: #2a1a02; font-weight: 600; }
   .badge.new { background: var(--accent); color: #04222e; font-weight: 600; }
   .spark { vertical-align: middle; }
@@ -503,7 +504,7 @@ function ingestTripsText(text) {
   if (!parsed || typeof parsed.routes !== "object" || Array.isArray(parsed.routes)) { alert("Unexpected file format — expected { meta, routes } from node detail.mjs."); return; }
   TRIPS = parsed;
   paintFreshness();
-  if (DATA) { renderGrid(); renderWatch(); }
+  if (DATA) renderAll();
 }
 // "· 2 routes detailed · 3d ago" for the header pill; empty when no itineraries are loaded.
 function tripsSummary() {
@@ -549,6 +550,19 @@ function trendBadge(tr) {
   if (tr.dropped) return `<span class="tdrop" title="cheaper by ${fmt(-tr.deltaMiles)} since last pull">▼ ${fmt(-tr.deltaMiles)}</span>`;
   if (tr.rose) return `<span class="trise" title="up ${fmt(tr.deltaMiles)} since last pull">▲ ${fmt(tr.deltaMiles)}</span>`;
   return "";
+}
+// "via MUC" badge from itinerary detail: how the cheapest itinerary routes. Empty when the
+// route has no detail. A nonstop cheapest only gets its own badge when the row lacks one.
+function viaBadge(origin, dest, { cabin, date }, hasDirectBadge) {
+  // Prefer the row's own date; if detail has nothing there (availability drifted since the
+  // pull), fall back to the cheapest itinerary on any pulled date — the tooltip names it.
+  const best = Explore.cheapestRouting(TRIPS, origin, dest, { cabin, date }) || (date ? Explore.cheapestRouting(TRIPS, origin, dest, { cabin }) : null);
+  if (!best) return "";
+  const when = best.date ? ` on ${fmtDate(best.date)}` : "";
+  const what = `cheapest ${cabinLabel(best.cabin)} itinerary${when}: ${best.flights.join(", ") || "?"} · ${fmt(best.miles)} pts`;
+  if (best.stops === 0) return hasDirectBadge ? "" : ` <span class="badge direct" title="${esc(what)} · nonstop">nonstop</span>`;
+  const label = `${hasDirectBadge ? "cheapest " : ""}via ${esc(best.via.join(", "))}`;
+  return ` <span class="badge via" title="${esc(what)} · ${best.stops} stop${best.stops === 1 ? "" : "s"}">${label}</span>`;
 }
 // A "Trend" table cell for a route+cabin history key (sparkline + change badge).
 function trendCell(key) {
@@ -616,7 +630,7 @@ function renderDiscover() {
         h += `<td class="miles" style="background:${colorFor(t)};color:#04140a">${fmt(m)}${aff ? " ✓" : ""}</td>`;
       } else h += `<td class="muted">—</td>`;
     }
-    h += `<td class="num">${r.dateCount}</td><td class="l">${r.direct ? '<span class="badge direct">nonstop</span>' : ""}</td></tr>`;
+    h += `<td class="num">${r.dateCount}</td><td class="l">${r.direct ? '<span class="badge direct">nonstop</span>' : ""}${viaBadge(r.bestOrigin, r.destination, { cabin: cabs }, r.direct)}</td></tr>`;
   }
   h += `</tbody></table></div>`;
   $("discoverTable").innerHTML = h;
@@ -714,7 +728,7 @@ function renderSweet() {
     const t = r.mpm != null && mx > mn ? (r.mpm - mn) / (mx - mn) : null;
     const bestTitle = `${fmt(r.miles)} pts flies on ${r.bestDates.length} date${r.bestDates.length === 1 ? "" : "s"}: ${r.bestDates.slice(0, 10).join(", ")}${r.bestDates.length > 10 ? ", …" : ""} — click for the calendar`;
     const datesTitle = `${r.dateCount} departure date${r.dateCount === 1 ? "" : "s"} with availability, ${r.dateFirst} → ${r.dateLast} — click for the calendar`;
-    h += `<tr class="clickable" data-o="${esc(r.origin)}" data-d="${esc(r.destination)}" data-c="${r.cabin}"><td class="l"><span class="watch${watches[r.fareKey] ? " on" : ""}" data-watch="${esc(r.fareKey)}" title="Watch this route">${watches[r.fareKey] ? "★" : "☆"}</span> <b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}</td>
+    h += `<tr class="clickable" data-o="${esc(r.origin)}" data-d="${esc(r.destination)}" data-c="${r.cabin}"><td class="l"><span class="watch${watches[r.fareKey] ? " on" : ""}" data-watch="${esc(r.fareKey)}" title="Watch this route">${watches[r.fareKey] ? "★" : "☆"}</span> <b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}${viaBadge(r.origin, r.destination, { cabin: r.cabin, date: r.bestDate }, r.direct)}</td>
       <td class="l">${cabinLabel(r.cabin)}</td><td class="l muted">${esc(r.region)}</td>
       <td class="num">${r.distance ? fmt(r.distance) : "—"}</td>
       <td class="miles num">${fmt(r.miles)}</td>
