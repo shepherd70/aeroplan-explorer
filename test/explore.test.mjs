@@ -328,3 +328,47 @@ test("integration: sample-cache.json yields self-consistent results", () => {
   const hi = affordRows(recs, S({ balance: 120000 })).anyDest.size;
   assert.ok(hi >= lo, "more balance reaches at least as many destinations");
 });
+
+// --- itinerary detail (trips.cache.json) helpers -----------------------------
+const trip = (over = {}) => Object.assign(
+  { id: "t", cabin: "J", flights: ["AC836", "LH2476"], via: ["MUC"], aircraft: ["Airbus A330-300", "Airbus A320neo"],
+    dep: "2026-10-11T17:40", arr: "2026-10-12T15:40", duration: 1020, stops: 1, miles: 186800, taxes: 15282, seats: 5 }, over);
+const TRIPS = { meta: { schema: 1 }, routes: { "YYZ-LHR": { pulledAt: "2026-09-11T12:00:00Z", dates: {
+  "2026-10-11": [
+    trip({ id: "slow-cheap", miles: 100000, duration: 1200 }),
+    trip({ id: "fast-cheap", miles: 100000, duration: 900 }),
+    trip({ id: "nonstop", via: [], stops: 0, miles: 120000, duration: 420, seats: 2 }),
+    trip({ id: "eco", cabin: "Y", miles: 40000 }),
+  ],
+  "2026-10-12": [trip({ id: "next-day" })],
+} } } };
+
+test("tripsFor returns a date+cabin's itineraries cheapest-then-shortest, honoring direct/seats filters", () => {
+  const { tripsFor } = Explore;
+  assert.deepEqual(tripsFor(TRIPS, "YYZ", "LHR", "2026-10-11", "J", S()).map((t) => t.id), ["fast-cheap", "slow-cheap", "nonstop"]);
+  assert.deepEqual(tripsFor(TRIPS, "YYZ", "LHR", "2026-10-11", "J", S({ direct: true })).map((t) => t.id), ["nonstop"]);
+  assert.deepEqual(tripsFor(TRIPS, "YYZ", "LHR", "2026-10-11", "J", S({ seats: 3 })).map((t) => t.id), ["fast-cheap", "slow-cheap"]);
+  assert.deepEqual(tripsFor(TRIPS, "YYZ", "LHR", "2026-10-11", "Y", S()).map((t) => t.id), ["eco"]);
+  // "not pulled" / "no such date" / "no file" all come back as an empty list, never null
+  assert.deepEqual(tripsFor(TRIPS, "YYZ", "LHR", "2026-10-13", "J", S()), []);
+  assert.deepEqual(tripsFor(TRIPS, "YVR", "NRT", "2026-10-11", "J", S()), []);
+  assert.deepEqual(tripsFor(null, "YYZ", "LHR", "2026-10-11", "J", S()), []);
+});
+
+test("routeDetail reports pull age and coverage, or null when the route was never pulled", () => {
+  const { routeDetail } = Explore;
+  assert.deepEqual(routeDetail(TRIPS, "YYZ", "LHR"), { pulledAt: "2026-09-11T12:00:00Z", dateCount: 2, tripCount: 5 });
+  assert.equal(routeDetail(TRIPS, "YVR", "NRT"), null);
+  assert.equal(routeDetail(null, "YYZ", "LHR"), null);
+});
+
+test("layoverMinutes derives connection waits from segments, null without them", () => {
+  const { layoverMinutes } = Explore;
+  const withSegs = trip({ segments: [
+    { flight: "AC836", from: "YYZ", to: "MUC", dep: "2026-10-11T17:40", arr: "2026-10-12T07:45", duration: 485 },
+    { flight: "LH2476", from: "MUC", to: "LHR", dep: "2026-10-12T14:35", arr: "2026-10-12T15:40", duration: 125 },
+  ] });
+  assert.deepEqual(layoverMinutes(withSegs), [{ at: "MUC", minutes: 410 }]);
+  assert.deepEqual(layoverMinutes(trip({ segments: [{ flight: "AC1", from: "YYZ", to: "LHR", dep: "2026-10-11T17:40", arr: "2026-10-12T05:40" }] })), []);
+  assert.equal(layoverMinutes(trip()), null);
+});
