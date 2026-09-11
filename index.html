@@ -136,7 +136,8 @@
   <span id="freshness" class="pill">No data loaded</span>
   <div class="grow"></div>
   <button id="openBtn" class="primary">Open cache file…</button>
-  <button id="reloadBtn" title="Re-read the cache file">↻ Reload</button>
+  <button id="openTripsBtn" title="Open trips.cache.json — flight-level itineraries written by node detail.mjs">Open itineraries…</button>
+  <button id="reloadBtn" title="Re-read the cache file(s)">↻ Reload</button>
 </header>
 
 <div id="appBody" style="display:none">
@@ -262,6 +263,7 @@
 </div>
 
 <input type="file" id="fileFallback" accept=".json,application/json" style="display:none" />
+<input type="file" id="tripsFallback" accept=".json,application/json" style="display:none" />
 
 <!-- Pure data transforms (testable in Node, classic script so file:// still works). -->
 <script src="lib/explore.js"></script>
@@ -376,6 +378,8 @@ const FARES_KEY = "aeroplan-explorer-fares-v1";
 const WATCHES_KEY = "aeroplan-explorer-watches-v1";
 let settings = loadSettings();
 let fileHandle = null;
+let TRIPS = null;              // parsed trips.cache.json (itinerary detail from node detail.mjs), or null
+let tripsHandle = null;
 const sortState = { discover: settings.sortDiscover, afford: settings.sortAfford }; // persisted via settings
 
 // --- IndexedDB (persist the chosen file handle) -----------------------------
@@ -448,6 +452,57 @@ function ingestText(text) {
   if (records.length && !anyBookable) alert("Loaded, but no record has a bookable cabin — this may be the wrong file or an empty pull.");
   DATA = parsed; RECORDS = records;
   onDataLoaded();
+}
+
+// --- Loading the itineraries file (trips.cache.json) ---------------------------
+// Same flow as the main cache: a persisted File System Access handle when available,
+// a plain file input otherwise. Optional — every view works without it.
+async function openTripsWithPicker() {
+  if (!window.showOpenFilePicker) { document.getElementById("tripsFallback").click(); return; }
+  try {
+    const [h] = await window.showOpenFilePicker({
+      types: [{ description: "Itineraries (trips.cache.json)", accept: { "application/json": [".json"] } }],
+    });
+    tripsHandle = h;
+    await idbSet("tripsHandle", h);
+    await readTripsHandle();
+  } catch (e) { if (e.name !== "AbortError") alert("Couldn't open file: " + e.message); }
+}
+async function readTripsHandle() {
+  if (!tripsHandle) return;
+  const perm = await tripsHandle.queryPermission({ mode: "read" });
+  if (perm !== "granted") {
+    const req = await tripsHandle.requestPermission({ mode: "read" });
+    if (req !== "granted") { alert("Permission to read the itineraries file was denied."); return; }
+  }
+  const file = await tripsHandle.getFile();
+  ingestTripsText(await file.text());
+}
+async function restoreTripsHandle() {
+  try {
+    const h = await idbGet("tripsHandle");
+    if (!h) return;
+    tripsHandle = h;
+    if ((await h.queryPermission({ mode: "read" })) === "granted") await readTripsHandle();
+  } catch {}
+}
+function ingestTripsText(text) {
+  let parsed;
+  try { parsed = JSON.parse(text); } catch { alert("That file isn't valid JSON."); return; }
+  if (Array.isArray(parsed?.records)) { alert("That's the availability cache, not the itineraries file — pick trips.cache.json (written by node detail.mjs)."); return; }
+  if (!parsed || typeof parsed.routes !== "object" || Array.isArray(parsed.routes)) { alert("Unexpected file format — expected { meta, routes } from node detail.mjs."); return; }
+  TRIPS = parsed;
+  paintFreshness();
+  if (DATA) renderGrid();
+}
+// "· 2 routes detailed · 3d ago" for the header pill; empty when no itineraries are loaded.
+function tripsSummary() {
+  const routes = TRIPS ? Object.values(TRIPS.routes) : [];
+  if (!routes.length) return { text: "", warn: false };
+  const oldest = routes.map((r) => Date.parse(r.pulledAt || "")).filter(Number.isFinite).sort()[0];
+  const ageH = oldest ? (Date.now() - oldest) / 3.6e6 : null;
+  const age = ageH == null ? "" : ageH < 1 ? " · just now" : ageH < 24 ? ` · ${Math.round(ageH)}h ago` : ` · ${Math.round(ageH / 24)}d ago`;
+  return { text: ` · ${routes.length} route${routes.length === 1 ? "" : "s"} detailed${age}`, warn: ageH != null && ageH > 72 };
 }
 
 // --- Helpers ----------------------------------------------------------------
@@ -937,8 +992,11 @@ function renderWatch() {
 }
 
 // --- Freshness + data-loaded -----------------------------------------------
-function setFreshness(text, warn) {
-  const el = $("freshness"); el.textContent = text; el.className = "pill" + (warn ? " warn" : "");
+let fresh = { text: "No data loaded", warn: false }; // base pill text (main cache); trips add a suffix
+function setFreshness(text, warn) { fresh = { text, warn }; paintFreshness(); }
+function paintFreshness() {
+  const t = tripsSummary();
+  const el = $("freshness"); el.textContent = fresh.text + t.text; el.className = "pill" + (fresh.warn || t.warn ? " warn" : "");
 }
 function onDataLoaded() {
   $("appBody").style.display = "block";
@@ -1006,8 +1064,10 @@ function switchTab(name) {
 (function init() {
   $("openBtn").onclick = openWithPicker;
   $("openBtn2").onclick = openWithPicker;
-  $("reloadBtn").onclick = () => fileHandle ? readHandle() : openWithPicker();
+  $("reloadBtn").onclick = () => { fileHandle ? readHandle() : openWithPicker(); if (tripsHandle) readTripsHandle(); };
   $("fileFallback").onchange = (e) => { const f = e.target.files[0]; if (f) f.text().then(ingestText); };
+  $("openTripsBtn").onclick = openTripsWithPicker;
+  $("tripsFallback").onchange = (e) => { const f = e.target.files[0]; if (f) f.text().then(ingestTripsText); };
   cashFares = loadFares();
   watches = loadWatches();
 
@@ -1032,6 +1092,7 @@ function switchTab(name) {
   $("rtSort").addEventListener("change", () => { settings.sortRT = $("rtSort").value; saveSettings(); renderRT(); });
 
   restoreHandle();
+  restoreTripsHandle();
 })();
 </script>
 </body>
