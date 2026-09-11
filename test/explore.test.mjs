@@ -385,3 +385,54 @@ test("cheapestRouting picks the cheapest itinerary for a route (optionally one c
   assert.equal(cheapestRouting(TRIPS, "YVR", "NRT", { cabin: "J" }), null, "route never pulled");
   assert.equal(cheapestRouting(null, "YYZ", "LHR", { cabin: "J" }), null);
 });
+
+// --- Direct only: describe a cabin by its nonstop, not its cheapest (possibly connecting) itinerary ---
+// Cheapest J is a 70k connection with 5 seats / $152.82 on AC+LH; the nonstop is 186.8k, 2 seats, $46.80, AC.
+const mixedJ = () => ({ ...cab(70000, { seats: 5, direct: true, airlines: "AC, LH", taxes: 15282 }),
+  directMiles: 186800, directSeats: 2, directTaxes: 4680, directAirlines: "AC" });
+
+test("directView swaps in the nonstop's price, seats, taxes and carriers; older caches keep the cheapest values", () => {
+  const { directView } = Explore;
+  assert.deepEqual(directView(mixedJ()), { ...mixedJ(), miles: 186800, seats: 2, taxes: 4680, airlines: "AC" });
+  const conn = cab(70000, { direct: false });
+  assert.equal(directView(conn), conn, "not a nonstop: untouched");
+  const old = cab(70000, { seats: 5, direct: true, airlines: "AC", taxes: 15282 }); // pre-PR#3 cache: no direct* seats/taxes
+  assert.deepEqual(directView(old), { ...old, miles: 70000, seats: 5, taxes: 15282, airlines: "AC" });
+  const oldPrice = { ...old, directMiles: 80000 };
+  assert.equal(directView(oldPrice).miles, 80000, "directMiles has always been captured — use it");
+});
+
+test("qualifyingCabins under Direct only filters and reports on the nonstop's numbers", () => {
+  const r = rec("YYZ", "LHR", "2026-10-11", { J: mixedJ() });
+  assert.equal(qualifyingCabins(r, S({ direct: false }))[0].miles, 70000, "no filter: cheapest itinerary");
+  const q = qualifyingCabins(r, S({ direct: true }))[0];
+  assert.equal(q.miles, 186800);
+  assert.equal(q.seats, 2);
+  assert.equal(q.taxes, 4680);
+  assert.equal(q.airlines, "AC");
+  assert.deepEqual(qualifyingCabins(r, S({ direct: true, seats: 3 })), [], "Min seats 3 rejects the 2-seat nonstop");
+  assert.equal(qualifyingCabins(r, S({ direct: false, seats: 3 })).length, 1, "…but not the 5-seat connection");
+  assert.deepEqual(qualifyingCabins(r, S({ direct: true, maxMiles: 100000 })), [], "Max points applies to the nonstop price");
+  assert.deepEqual(qualifyingCabins(r, S({ direct: true, afford: true, balance: 100000 })), [], "affordability too");
+});
+
+test("sweetRows, affordRows and collectLeg show nonstop numbers under Direct only", () => {
+  const recs = [rec("YYZ", "LHR", "2026-10-11", { J: mixedJ() }, { taxesCurrency: "CAD" }),
+                rec("LHR", "YYZ", "2026-10-20", { J: mixedJ() }, { taxesCurrency: "CAD" })];
+  const sweet = sweetRows(recs, S({ direct: true }), { today: "2026-10-01" }).find((r) => r.origin === "YYZ");
+  assert.equal(sweet.miles, 186800);
+  assert.equal(sweet.taxes, 46.8);
+  assert.equal(sweet.airlines, "AC");
+  assert.equal(sweetRows(recs, S(), { today: "2026-10-01" }).find((r) => r.origin === "YYZ").miles, 70000);
+  const aff = affordRows(recs, S({ direct: true, balance: 200000 })).list.find((r) => r.origin === "YYZ");
+  assert.equal(aff.miles, 186800);
+  assert.equal(aff.taxes, 46.8);
+  assert.equal(affordRows(recs, S({ direct: true, balance: 100000 })).list.length, 0, "nonstop is out of reach");
+  const leg = Explore.collectLeg(recs, "YYZ", "LHR", "J", S({ direct: true }), "2026-10-01")[0];
+  assert.equal(leg.miles, 186800);
+  assert.equal(leg.seats, 2);
+  assert.equal(leg.taxes, 46.8);
+  const { rows } = roundTripRows(recs, S({ direct: true }), { origin: "YYZ", dest: "LHR", cabin: "J", minNights: 1, maxNights: 30, today: "2026-10-01" });
+  assert.equal(rows[0].totalMiles, 373600, "both legs priced as nonstops");
+  assert.equal(rows[0].totalTaxes, 93.6);
+});

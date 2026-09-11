@@ -180,6 +180,11 @@ direction separately, so it's an estimate — confirm both legs).
   space for a single date. The **Round trips** tab pairs outbound + return for you, but only
   when the cache holds the return legs — ingest with `pullReturns: true` (or `originRegions:
   []`). Aeroplan prices each direction separately at booking, so confirm both legs.
+- **Direct only describes the nonstop.** A cabin's points, seats, taxes and carriers normally
+  belong to its *cheapest* itinerary, which may connect. With **Direct only** ticked, every view
+  reports the nonstop's own numbers instead (a nonstop is often pricier with fewer seats), so the
+  Min seats, Max points and balance filters apply to what you'd actually book. Caches ingested
+  before this was captured fall back to the cheapest values until you re-run `node ingest.mjs`.
 - **Seat counts are a snapshot.** A cabin shows as available when seats.aero reported it
   bookable at last ingest; remaining-seat numbers are point-in-time and can be stale. Use
   the **Min seats** filter to require a minimum.
