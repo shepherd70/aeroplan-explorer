@@ -5,7 +5,7 @@ Plan: `tasks/plan.md`. Read-only planning done 2026-09-11; no code changed yet.
 ## Phase 1: Foundation
 - [x] **Task 1** `normalizeTrip()` + schema in `detail.mjs` (isMain-guarded), fixtures + tests in `test/detail.test.mjs` — S
 - [x] **Task 2** `node detail.mjs ORIG-DEST …` CLI: per-route search with `include_trips=true&sources=aeroplan`, skip-pagination, merge-by-route into `trips.cache.json`, quota floor, retries; export `loadApiKey/readRemainingQuota/sleep` from `ingest.mjs` — M
-- [ ] **Task 3** `lib/explore.js`: `tripsFor`, `layoverMinutes`, `routeDetail` + tests — S
+- [x] **Task 3** `lib/explore.js`: `tripsFor`, `layoverMinutes`, `routeDetail` + tests — S
 - [ ] **Task 4** `index.html`: Open itineraries… button, `tripsHandle` in IndexedDB, `ingestTripsText`, Reload/restore both files, pill suffix — S
 
 ### Checkpoint A
