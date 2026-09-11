@@ -345,4 +345,4 @@ function sleep(ms) {
 }
 
 // Exported for unit tests. Importing this file does NOT run the ingester (see isMain).
-export { normalize, toInt, hasAnyCabin };
+export { normalize, toInt, hasAnyCabin, loadApiKey, readRemainingQuota, sleep };

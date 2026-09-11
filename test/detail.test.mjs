@@ -90,3 +90,92 @@ test("normalizeTrip tolerates missing optional arrays and returns null on malfor
   assert.equal(normalizeTrip({ ...SEARCH_TRIP, DestinationAirport: "" }), null);
   assert.equal(normalizeTrip({ ...SEARCH_TRIP, DepartsAt: undefined }), null);
 });
+
+// --- CLI helpers: args, pull (fake fetch), merge -------------------------------
+import { parseArgs, pullRoute, mergeRoutes } from "../detail.mjs";
+
+test("parseArgs accepts ORIG-DEST routes (any case) and optional --start/--end", () => {
+  const a = parseArgs(["yyz-lhr", "YVR-NRT", "--start", "2026-10-01", "--end", "2026-10-31"]);
+  assert.deepEqual(a.routes, [{ origin: "YYZ", dest: "LHR" }, { origin: "YVR", dest: "NRT" }]);
+  assert.equal(a.start, "2026-10-01");
+  assert.equal(a.end, "2026-10-31");
+  assert.equal(parseArgs(["YYZ-LHR"]).start, undefined);
+  assert.deepEqual(parseArgs(["YYZ-LHR", "YYZ-LHR"]).routes, [{ origin: "YYZ", dest: "LHR" }], "duplicates collapse");
+});
+
+test("parseArgs rejects malformed routes, dates, and unknown flags", () => {
+  assert.throws(() => parseArgs(["YYZLHR"]), /YYZLHR/);
+  assert.throws(() => parseArgs(["YYZ-LHR", "--start", "10/01/2026"]), /--start/);
+  assert.throws(() => parseArgs(["YYZ-LHR", "--start", "2026-13-01"]), /--start/, "impossible month");
+  assert.throws(() => parseArgs(["YYZ-LHR", "--end", "2026-02-30"]), /--end/, "impossible day");
+  assert.throws(() => parseArgs(["YYZ-LHR", "--bogus"]), /--bogus/);
+  assert.throws(() => parseArgs([]), /usage/i);
+});
+
+// A fake fetch that serves two pages for one route and records the URLs it was asked for.
+function fakeSearch(pages, { remaining = 900 } = {}) {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    calls.push(new URL(url));
+    const skip = parseInt(new URL(url).searchParams.get("skip") || "0", 10);
+    const page = pages.find((p) => p.skip === skip) || { data: [], hasMore: false };
+    return {
+      ok: true, status: 200,
+      headers: new Headers({ "x-ratelimit-remaining": String(remaining--) }),
+      json: async () => ({ data: page.data, hasMore: page.hasMore, cursor: 123, count: 999 }),
+      text: async () => "",
+    };
+  };
+  return { fetchImpl, calls };
+}
+const searchRec = (Date, trips, Source = "aeroplan") => ({ ID: `rec-${Date}`, Date, Source, AvailabilityTrips: trips });
+
+test("pullRoute paginates by skip, groups normalized trips by record date, skips other programs", async () => {
+  const cheapLater = { ...SEARCH_TRIP, ID: "b", MileageCost: 30000, TotalDuration: 900, DepartsAt: "2026-09-21T09:00:00Z" };
+  const { fetchImpl, calls } = fakeSearch([
+    { skip: 0, hasMore: true, data: [searchRec("2026-09-20", [SEARCH_TRIP]), searchRec("2026-09-20", [SEARCH_TRIP], "united")] },
+    { skip: 2, hasMore: false, data: [searchRec("2026-09-21", [cheapLater, SEARCH_TRIP, { ...SEARCH_TRIP, Cabin: "suite" }])] },
+  ]);
+  const r = await pullRoute({ origin: "RDU", dest: "YVR", start: "2026-09-20", end: "2026-09-21", apiKey: "k", fetchImpl, pauseMs: 0 });
+  assert.equal(calls.length, 2);
+  const q = calls[0].searchParams;
+  assert.equal(calls[0].pathname, "/partnerapi/search");
+  assert.equal(q.get("origin_airport"), "RDU");
+  assert.equal(q.get("destination_airport"), "YVR");
+  assert.equal(q.get("include_trips"), "true");
+  assert.equal(q.get("sources"), "aeroplan");
+  assert.equal(q.get("start_date"), "2026-09-20");
+  assert.equal(calls[1].searchParams.get("skip"), "2", "second page advances by items received");
+  assert.equal(calls[1].searchParams.get("cursor"), "123", "snapshot token is passed back");
+  assert.deepEqual(Object.keys(r.dates), ["2026-09-20", "2026-09-21"]);
+  assert.equal(r.dates["2026-09-20"].length, 1, "the united record is ignored");
+  assert.deepEqual(r.dates["2026-09-21"].map((t) => t.id), ["b", SEARCH_TRIP.ID], "cheapest first; unknown cabin dropped");
+  assert.equal(r.apiCalls, 2);
+  assert.equal(r.quotaRemaining, 899);
+  assert.equal(r.tripCount, 3);
+});
+
+test("pullRoute retries a 429 then succeeds, and throws on a persistent 500", async () => {
+  let n = 0;
+  const flaky = async () => (++n === 1
+    ? { ok: false, status: 429, headers: new Headers({ "retry-after": "0" }), json: async () => ({}), text: async () => "slow down" }
+    : { ok: true, status: 200, headers: new Headers(), json: async () => ({ data: [], hasMore: false }), text: async () => "" });
+  const r = await pullRoute({ origin: "A", dest: "B", start: "2026-01-01", end: "2026-01-02", apiKey: "k", fetchImpl: flaky, pauseMs: 0 });
+  assert.equal(r.apiCalls, 2);
+  const dead = async () => ({ ok: false, status: 500, statusText: "boom", headers: new Headers(), json: async () => ({}), text: async () => "" });
+  await assert.rejects(
+    () => pullRoute({ origin: "A", dest: "B", start: "2026-01-01", end: "2026-01-02", apiKey: "k", fetchImpl: dead, pauseMs: 0, maxRetries: 1 }),
+    /HTTP 500/);
+});
+
+test("mergeRoutes replaces only the pulled routes and stamps meta", () => {
+  const old = { meta: { source: "aeroplan", generatedAt: "2026-09-01T00:00:00Z", schema: 1 },
+    routes: { "YVR-NRT": { pulledAt: "2026-09-01T00:00:00Z", dates: { "2026-09-05": [] } },
+              "YYZ-LHR": { pulledAt: "2026-09-01T00:00:00Z", dates: { "2026-09-05": [] } } } };
+  const pulled = { "YYZ-LHR": { pulledAt: "2026-09-11T00:00:00Z", dateWindow: { start: "2026-09-11", end: "2026-12-07" }, dates: { "2026-10-11": [{ id: "x" }] } } };
+  const out = mergeRoutes(old, pulled, "2026-09-11T00:00:00Z");
+  assert.deepEqual(out.routes["YVR-NRT"], old.routes["YVR-NRT"], "untouched route survives byte-for-byte");
+  assert.deepEqual(out.routes["YYZ-LHR"], pulled["YYZ-LHR"]);
+  assert.deepEqual(out.meta, { source: "aeroplan", generatedAt: "2026-09-11T00:00:00Z", schema: 1 });
+  assert.deepEqual(Object.keys(mergeRoutes(null, pulled, "t").routes), ["YYZ-LHR"], "no existing file");
+});

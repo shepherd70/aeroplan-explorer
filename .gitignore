@@ -5,6 +5,7 @@
 # sample-cache.json IS committed so a fresh clone can preview offline
 # (regenerate it with `node make-sample.mjs`).
 aeroplan-cache.json
+# trips.cache.json (itinerary detail from `node detail.mjs`) is covered by *.cache.json below.
 *.cache.json
 !sample-cache.json
 
