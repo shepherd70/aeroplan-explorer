@@ -179,3 +179,52 @@ test("mergeRoutes replaces only the pulled routes and stamps meta", () => {
   assert.deepEqual(out.meta, { source: "aeroplan", generatedAt: "2026-09-11T00:00:00Z", schema: 1 });
   assert.deepEqual(Object.keys(mergeRoutes(null, pulled, "t").routes), ["YYZ-LHR"], "no existing file");
 });
+
+// --- exact layovers: --date via /trips/{id} ------------------------------------
+import { availabilityIdFor, pullTrips, mergeDateTrips } from "../detail.mjs";
+
+test("parseArgs accepts --date for a per-date segment pull", () => {
+  assert.equal(parseArgs(["YYZ-LHR", "--date", "2026-10-11"]).date, "2026-10-11");
+  assert.throws(() => parseArgs(["YYZ-LHR", "--date", "2026-10-32"]), /--date/);
+  assert.equal(parseArgs(["YYZ-LHR"]).date, undefined);
+});
+
+test("availabilityIdFor finds the main-cache record id for route+date", () => {
+  const recs = [
+    { id: "a1", origin: "YYZ", destination: "LHR", date: "2026-10-10" },
+    { id: "a2", origin: "YYZ", destination: "LHR", date: "2026-10-11" },
+    { id: "a3", origin: "YVR", destination: "LHR", date: "2026-10-11" },
+  ];
+  assert.equal(availabilityIdFor(recs, "YYZ", "LHR", "2026-10-11"), "a2");
+  assert.equal(availabilityIdFor(recs, "YYZ", "LHR", "2026-10-12"), null);
+  assert.equal(availabilityIdFor([], "YYZ", "LHR", "2026-10-11"), null);
+});
+
+test("pullTrips fetches /trips/{id} and normalizes every trip with segments", async () => {
+  const calls = [];
+  const fetchImpl = async (url) => { calls.push(new URL(url)); return {
+    ok: true, status: 200, headers: new Headers({ "x-ratelimit-remaining": "500" }),
+    json: async () => ({ data: [TRIPS_TRIP, { ...TRIPS_TRIP, ID: "eco", Cabin: "economy" }, { ...TRIPS_TRIP, ID: "bad", Cabin: "suite" }], booking_links: [] }),
+    text: async () => "" }; };
+  const r = await pullTrips({ availabilityId: "34OzjwGWcayk42v90F6SRioxaFj", apiKey: "k", fetchImpl, pauseMs: 0 });
+  assert.equal(calls[0].pathname, "/partnerapi/trips/34OzjwGWcayk42v90F6SRioxaFj");
+  assert.deepEqual(r.trips.map((t) => t.id), [TRIPS_TRIP.ID, "eco"], "unknown cabin dropped");
+  assert.equal(r.trips[0].segments.length, 2);
+  assert.equal(r.apiCalls, 1);
+  assert.equal(r.quotaRemaining, 500);
+});
+
+test("mergeDateTrips upgrades matching trips with segments, adds new ones, keeps the rest, sorts", () => {
+  const existing = [
+    { id: "x", cabin: "J", miles: 100000, duration: 900 },
+    { id: "y", cabin: "Y", miles: 40000, duration: 700 },
+  ];
+  const pulled = [
+    { id: "x", cabin: "J", miles: 100000, duration: 900, segments: [{ flight: "AC1" }] },
+    { id: "z", cabin: "J", miles: 90000, duration: 800, segments: [{ flight: "AC2" }] },
+  ];
+  const out = mergeDateTrips(existing, pulled);
+  assert.deepEqual(out.map((t) => t.id), ["y", "z", "x"], "cheapest first; y kept; z added");
+  assert.deepEqual(out.find((t) => t.id === "x").segments, [{ flight: "AC1" }]);
+  assert.deepEqual(mergeDateTrips(undefined, pulled).map((t) => t.id), ["z", "x"], "no prior trips for the date");
+});
