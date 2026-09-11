@@ -7,6 +7,9 @@
 // Run:   node detail.mjs YYZ-LHR YVR-NRT [--start YYYY-MM-DD] [--end YYYY-MM-DD]
 //        One API request per route (a second only if the window exceeds one page).
 //        The date window defaults to the one in aeroplan-cache.json, else today → +90 days.
+//        node detail.mjs YYZ-LHR --date 2026-10-11
+//        Exact layovers for ONE date: one request per route+date to /trips/{id}, which adds
+//        per-segment times to that date's itineraries (the explorer then shows a Layovers column).
 // Needs: a seats.aero Pro API key in env var SEATS_AERO_KEY (or a local .env file).
 //
 // Zero dependencies — uses Node 18+ native fetch.
@@ -34,7 +37,8 @@ const CONFIG = {
   outFile: join(__dirname, "trips.cache.json"),
 };
 const SCHEMA = 1;
-const USAGE = "usage: node detail.mjs ORIG-DEST [ORIG-DEST …] [--start YYYY-MM-DD] [--end YYYY-MM-DD]";
+const USAGE = "usage: node detail.mjs ORIG-DEST [ORIG-DEST …] [--start YYYY-MM-DD] [--end YYYY-MM-DD]\n" +
+              "       node detail.mjs ORIG-DEST [ORIG-DEST …] --date YYYY-MM-DD   (exact layovers for one date)";
 
 // Run only when executed directly — never when a test imports the helpers below.
 if (isMain(import.meta.url)) {
@@ -62,13 +66,15 @@ async function main() {
     process.exit(1);
   }
 
+  const existing = readExisting(CONFIG.outFile);
+  if (args.date) return await mainDate(args, apiKey, existing);
+
   const win = { ...defaultWindow(CONFIG.mainCache), ...(args.start && { start: args.start }), ...(args.end && { end: args.end }) };
   console.log(`Aeroplan Award Explorer — itinerary detail`);
   console.log(`  routes : ${args.routes.map((r) => `${r.origin}-${r.dest}`).join(", ")}`);
   console.log(`  dates  : ${win.start} → ${win.end}`);
   console.log("");
 
-  const existing = readExisting(CONFIG.outFile);
   const pulled = {};
   let apiCalls = 0, quotaRemaining = null;
   try {
@@ -88,14 +94,63 @@ async function main() {
         (cab ? ` (${cab})` : "") + (quotaRemaining != null ? ` · ~${quotaRemaining} calls left` : ""));
     }
   } finally {
-    // Persist whatever was collected — a mid-run failure shouldn't waste the quota spent.
-    if (Object.keys(pulled).length) {
-      const cache = mergeRoutes(existing, pulled, new Date().toISOString());
-      writeFileSync(CONFIG.outFile, JSON.stringify(cache));
-      console.log(`\n✅ Wrote ${Object.keys(cache.routes).length} route(s) to ${CONFIG.outFile}`);
-      console.log(`   API calls used: ${apiCalls}` + (quotaRemaining != null ? `, ~${quotaRemaining} left today` : ""));
-    }
+    writeOut(existing, pulled, apiCalls, quotaRemaining);
   }
+}
+
+// --date mode: per-segment detail (exact layovers) for one date of each route. The
+// availability id comes from the main cache, so that must hold the route+date.
+async function mainDate(args, apiKey, existing) {
+  const { date } = args;
+  console.log(`Aeroplan Award Explorer — itinerary detail (exact layovers)`);
+  console.log(`  routes : ${args.routes.map((r) => `${r.origin}-${r.dest}`).join(", ")}`);
+  console.log(`  date   : ${date}`);
+  console.log("");
+  if (!existsSync(CONFIG.mainCache)) {
+    console.error(`❌ ${CONFIG.mainCache} not found — run "node ingest.mjs" first (it supplies the availability ids).`);
+    process.exit(1);
+  }
+  const records = JSON.parse(readFileSync(CONFIG.mainCache, "utf8")).records || [];
+  const pulled = {};
+  let apiCalls = 0, quotaRemaining = null, failed = 0;
+  try {
+    for (const { origin, dest } of args.routes) {
+      const key = `${origin}-${dest}`;
+      const id = availabilityIdFor(records, origin, dest, date);
+      if (!id) {
+        console.error(`  ❌ ${key} ${date}: no availability record in aeroplan-cache.json — check the date, or re-run node ingest.mjs.`);
+        failed++;
+        continue;
+      }
+      if (quotaRemaining != null && quotaRemaining <= CONFIG.quotaFloor) {
+        console.log(`  ⚠ Skipping ${key} — only ~${quotaRemaining} API calls left today.`);
+        failed++;
+        continue;
+      }
+      const r = await pullTrips({ availabilityId: id, apiKey });
+      apiCalls += r.apiCalls;
+      if (r.quotaRemaining != null) quotaRemaining = r.quotaRemaining;
+      const prev = pulled[key] || existing?.routes?.[key] || { dateWindow: { start: date, end: date }, dates: {} };
+      const entry = { ...prev, pulledAt: new Date().toISOString(), dates: { ...prev.dates } };
+      entry.dates[date] = mergeDateTrips(entry.dates[date], r.trips);
+      pulled[key] = entry;
+      const withSegs = entry.dates[date].filter((t) => t.segments).length;
+      console.log(`  ✅ ${key} ${date}: ${r.trips.length} itineraries with segments (${withSegs} of ${entry.dates[date].length} on this date now have exact layovers)` +
+        (quotaRemaining != null ? ` · ~${quotaRemaining} calls left` : ""));
+    }
+  } finally {
+    writeOut(existing, pulled, apiCalls, quotaRemaining);
+  }
+  if (failed) process.exit(1);
+}
+
+// Persist whatever was collected — a mid-run failure shouldn't waste the quota spent.
+function writeOut(existing, pulled, apiCalls, quotaRemaining) {
+  if (!Object.keys(pulled).length) return;
+  const cache = mergeRoutes(existing, pulled, new Date().toISOString());
+  writeFileSync(CONFIG.outFile, JSON.stringify(cache));
+  console.log(`\n✅ Wrote ${Object.keys(cache.routes).length} route(s) to ${CONFIG.outFile}`);
+  console.log(`   API calls used: ${apiCalls}` + (quotaRemaining != null ? `, ~${quotaRemaining} left today` : ""));
 }
 
 // --- CLI args -----------------------------------------------------------------
@@ -113,7 +168,7 @@ function parseArgs(argv) {
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--start" || a === "--end") {
+    if (a === "--start" || a === "--end" || a === "--date") {
       const v = argv[++i];
       if (!isDate(v)) throw new Error(`${a} needs a YYYY-MM-DD date (got "${v ?? ""}")\n${USAGE}`);
       out[a.slice(2)] = v;
@@ -148,26 +203,10 @@ async function pullRoute({ origin, dest, start, end, apiKey, fetchImpl = fetch, 
     if (skip > 0) params.set("skip", String(skip));
     if (snapshot != null) params.set("cursor", String(snapshot));
     const url = `${CONFIG.base}/search?${params.toString()}`;
-
-    let res;
-    for (let attempt = 0; ; attempt++) {
-      res = await fetchImpl(url, { headers: { "Partner-Authorization": apiKey, Accept: "application/json" } });
-      apiCalls++;
-      const remaining = readRemainingQuota(res.headers);
-      if (remaining != null) quotaRemaining = remaining;
-      if (res.ok) break;
-      if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
-        const ra = parseInt(res.headers.get("retry-after") || "", 10);
-        const waitMs = Number.isFinite(ra) ? ra * 1000 : Math.min(30000, 1000 * 2 ** attempt);
-        console.warn(`  ⚠ HTTP ${res.status} on ${origin}-${dest} page ${page + 1} — retrying in ${Math.round(waitMs / 1000)}s`);
-        await sleep(waitMs);
-        continue;
-      }
-      const body = await res.text().catch(() => "");
-      throw new Error(`HTTP ${res.status} ${res.statusText || ""} on ${origin}-${dest} page ${page + 1}` + (body ? `\n   ${body.slice(0, 400)}` : ""));
-    }
-
-    const json = await res.json();
+    const got = await fetchWithRetry(url, { apiKey, fetchImpl, maxRetries, label: `${origin}-${dest} page ${page + 1}` });
+    apiCalls += got.calls;
+    if (got.quotaRemaining != null) quotaRemaining = got.quotaRemaining;
+    const json = got.json;
     const items = Array.isArray(json) ? json : json.data || [];
     for (const rec of items) {
       if (rec?.Source && rec.Source !== CONFIG.source) continue; // defensive: `sources=` should already filter
@@ -192,6 +231,53 @@ async function pullRoute({ origin, dest, start, end, apiKey, fetchImpl = fetch, 
     sorted[d] = dates[d].sort((a, b) => a.miles - b.miles || a.duration - b.duration);
   }
   return { dates: sorted, apiCalls, quotaRemaining, tripCount };
+}
+
+// GET one URL with bounded retry/backoff on transient 429/5xx (honors Retry-After).
+async function fetchWithRetry(url, { apiKey, fetchImpl = fetch, maxRetries = CONFIG.maxRetries, label = url }) {
+  let calls = 0, quotaRemaining = null;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetchImpl(url, { headers: { "Partner-Authorization": apiKey, Accept: "application/json" } });
+    calls++;
+    const remaining = readRemainingQuota(res.headers);
+    if (remaining != null) quotaRemaining = remaining;
+    if (res.ok) return { json: await res.json(), calls, quotaRemaining };
+    if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+      const ra = parseInt(res.headers.get("retry-after") || "", 10);
+      const waitMs = Number.isFinite(ra) ? ra * 1000 : Math.min(30000, 1000 * 2 ** attempt);
+      console.warn(`  ⚠ HTTP ${res.status} on ${label} — retrying in ${Math.round(waitMs / 1000)}s`);
+      await sleep(waitMs);
+      continue;
+    }
+    const body = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status} ${res.statusText || ""} on ${label}` + (body ? `\n   ${body.slice(0, 400)}` : ""));
+  }
+}
+
+// --- exact layovers for one date (/trips/{id}) ------------------------------------
+
+// The main cache's record id for a route+date — that is the availability id /trips wants.
+function availabilityIdFor(records, origin, dest, date) {
+  const r = (records || []).find((x) => x.origin === origin && x.destination === dest && x.date === date);
+  return r?.id || null;
+}
+
+// Every itinerary of one availability record, with per-segment detail. One request.
+async function pullTrips({ availabilityId, apiKey, fetchImpl = fetch, maxRetries = CONFIG.maxRetries }) {
+  const url = `${CONFIG.base}/trips/${encodeURIComponent(availabilityId)}`;
+  const got = await fetchWithRetry(url, { apiKey, fetchImpl, maxRetries, label: `trips ${availabilityId}` });
+  const items = Array.isArray(got.json) ? got.json : got.json?.data || [];
+  const trips = items.map(normalizeTrip).filter(Boolean);
+  return { trips, apiCalls: got.calls, quotaRemaining: got.quotaRemaining };
+}
+
+// Fold a /trips pull into a date's existing itineraries: same trip id -> replaced (now with
+// segments), new ids -> added, everything else kept. Cheapest first, then shortest.
+function mergeDateTrips(existing, pulled) {
+  const byId = new Map();
+  for (const t of existing || []) byId.set(t.id ?? `${t.cabin}|${t.flights?.join(",")}|${t.dep}`, t);
+  for (const t of pulled || []) byId.set(t.id ?? `${t.cabin}|${t.flights?.join(",")}|${t.dep}`, t);
+  return [...byId.values()].sort((a, b) => a.miles - b.miles || a.duration - b.duration);
 }
 
 // --- cache file -----------------------------------------------------------------
@@ -298,4 +384,4 @@ function normalizeTrip(raw) {
 }
 
 // Exported for unit tests. Importing this file does NOT run the puller (see isMain).
-export { normalizeTrip, localStamp, parseArgs, pullRoute, mergeRoutes, defaultWindow };
+export { normalizeTrip, localStamp, parseArgs, pullRoute, mergeRoutes, defaultWindow, availabilityIdFor, pullTrips, mergeDateTrips };
