@@ -127,7 +127,6 @@
   .legend { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--muted); margin: 8px 0; flex-wrap: wrap; }
   .legend .sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; margin-right: 4px; }
   .fareinp { width: 80px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; font: inherit; }
-  .fareinp.auto { color: var(--accent); border-color: #2a4a5a; font-style: italic; }
 </style>
 </head>
 <body>
@@ -620,9 +619,15 @@ function renderMap(rows) {
 }
 
 // === View 2: Sweet-spot value finder =======================================
+// Typed cash fares are assumed to be in the award-tax currency seats.aero reports
+// (CAD for Aeroplan), so ¢/pt can net the taxes out. Pick the most common one.
+function fareCurrency() {
+  const n = new Map();
+  for (const r of RECORDS) if (r.taxesCurrency) n.set(r.taxesCurrency, (n.get(r.taxesCurrency) || 0) + 1);
+  return [...n.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+}
 const sweetRows = () => Explore.sweetRows(RECORDS, settings,
-  { autoFares: DATA.cashFares || {}, manualFares: cashFares, today: localToday(),
-    faresCurrency: DATA.meta?.fares?.currency || "" });
+  { manualFares: cashFares, today: localToday(), faresCurrency: fareCurrency() });
 function renderSweet() {
   const rows = sweetRows();
   const sortBy = settings.sortSweet;
@@ -654,17 +659,14 @@ function renderSweet() {
       <td class="num" style="background:${colorFor(t)};color:${t!=null?'#04140a':'inherit'}">${r.mpm != null ? r.mpm.toFixed(0) : "—"}</td>
       <td class="num">${r.seats || "—"}</td>
       <td class="num" title="${r.taxes != null ? "$" + r.taxes.toFixed(2) + " " + esc(r.taxesCurrency) + " taxes &amp; carrier surcharges on the award" : "Re-run node ingest.mjs to capture taxes"}">${r.taxes != null ? "$" + fmt(r.taxes) : "—"}</td>
-      <td class="l"><input type="number" min="0" step="50" value="${r.fareValue ?? ""}" data-fare="${esc(r.fareKey)}" class="fareinp${r.fareAuto ? " auto" : ""}" title="${r.fareAuto ? "Auto cash fare from Amadeus — type to override, clear to revert" : ""}"></td>
+      <td class="l"><input type="number" min="0" step="50" value="${r.fareValue ?? ""}" data-fare="${esc(r.fareKey)}" class="fareinp" placeholder="${esc(fareCurrency())}" title="Cash fare for this route & cabin${fareCurrency() ? " in " + esc(fareCurrency()) : ""} — type to set, clear to remove"></td>
       <td class="num" title="${r.cpp == null ? "" : r.cppIsNet ? "net of $" + r.taxes.toFixed(2) + " " + esc(r.taxesCurrency) + " award taxes" : "gross — taxes not netted (different currency or not yet captured)"}" style="${r.beatsValuation===true?'color:var(--good);font-weight:600':r.beatsValuation===false?'color:var(--bad)':''}">${r.cpp != null ? r.cpp.toFixed(2) : "—"}</td>
       <td class="num">${r.estValue != null ? "$" + fmt(r.estValue) : "—"}</td>
       <td class="l">${r.sweet ? '<span class="badge sweet">sweet spot</span>' : ""}</td></tr>`;
   }
   h += `</tbody></table></div>`;
-  const fm = DATA.meta?.fares;
-  const fmDate = fm?.updatedAt ? fm.updatedAt.slice(0, 10) : "";
-  const status = fm
-    ? `<p class="hint">Auto cash fares: <b>${fm.count}</b> routes in ${esc(fm.currency || "")}${fmDate ? `, updated ${fmDate}` : ""}${fm.pricedThisRun != null ? ` (${fm.pricedThisRun} re-priced last run)` : ""}. <b>¢/pt is net of the award’s taxes</b> when the fare &amp; tax share a currency (hover a ¢/pt cell to check); Est $ uses your point value. Type in any Cash $ cell to override; clear it to revert to the auto fare.</p>`
-    : "";
+  const fc = fareCurrency();
+  const status = `<p class="hint">Type a cash fare${fc ? ` (in <b>${esc(fc)}</b>, the award-tax currency)` : ""} in any <b>Cash $</b> cell for true ¢/pt; fares are saved in this browser. <b>¢/pt is net of the award’s taxes</b> when the fare &amp; tax share a currency (hover a ¢/pt cell to check); Est $ uses your point value.</p>`;
   let nNew = 0, nDrop = 0;
   if (DATA.history) for (const r of rows) { const tr = Explore.historyTrend(DATA.history[r.fareKey]); if (tr) { if (tr.isNew) nNew++; else if (tr.dropped) nDrop++; } }
   const histNote = DATA.history ? `<p class="hint">Since the previous pull: <b>${nNew}</b> newly available, <b>${nDrop}</b> cheaper. The <b>Trend</b> column shows each route's cheapest-points history.</p>` : "";
@@ -848,8 +850,7 @@ function renderRT() {
   const origin = $("rtOrigin").value, dest = $("rtDest").value, cabin = $("rtCabin").value;
   const res = Explore.roundTripRows(RECORDS, settings, {
     origin, dest, cabin, minNights: settings.rtMinNights, maxNights: settings.rtMaxNights,
-    autoFares: DATA.cashFares || {}, manualFares: cashFares,
-    faresCurrency: DATA.meta?.fares?.currency || "", today: localToday(),
+    manualFares: cashFares, faresCurrency: fareCurrency(), today: localToday(),
   });
   const info = $("rtInfo");
   if (!res.hasReturnData) {

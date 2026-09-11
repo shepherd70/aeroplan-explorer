@@ -68,18 +68,18 @@ test("discoverRows aggregates cheapest-per-cabin, date count, best origin, direc
 });
 
 // --- sweetRows: value math + quantile ---------------------------------------
-test("sweetRows computes mpm, cpp (auto + manual override), estValue, beatsValuation", () => {
+test("sweetRows computes mpm, cpp from a manual fare, estValue, beatsValuation", () => {
   const recs = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000) }, { distance: 4000 })];
-  const auto = sweetRows(recs, S({ pointValue: 1.5 }), { autoFares: { "YVR-NRT-J": 900 }, manualFares: {}, today: "2026-06-01" })[0];
-  assert.equal(auto.mpm, (60000 / 4000) * 1000);          // 15000
-  assert.equal(auto.cpp, (900 * 100) / 60000);            // 1.5
-  assert.equal(auto.fareAuto, true);
-  assert.equal(auto.estValue, (60000 * 1.5) / 100);       // 900
-  assert.equal(auto.beatsValuation, true);                // 1.5 >= 1.5
+  const r = sweetRows(recs, S({ pointValue: 1.5 }), { manualFares: { "YVR-NRT-J": 900 }, today: "2026-06-01" })[0];
+  assert.equal(r.mpm, (60000 / 4000) * 1000);          // 15000
+  assert.equal(r.cpp, (900 * 100) / 60000);            // 1.5
+  assert.equal(r.fareValue, 900);
+  assert.equal(r.estValue, (60000 * 1.5) / 100);       // 900
+  assert.equal(r.beatsValuation, true);                // 1.5 >= 1.5
 
-  const manual = sweetRows(recs, S(), { autoFares: { "YVR-NRT-J": 900 }, manualFares: { "YVR-NRT-J": 1200 }, today: "2026-06-01" })[0];
-  assert.equal(manual.cpp, (1200 * 100) / 60000);         // 2.0 — manual overrides auto
-  assert.equal(manual.fareAuto, false);
+  const none = sweetRows(recs, S(), { today: "2026-06-01" })[0];
+  assert.equal(none.fareValue, null);
+  assert.equal(none.cpp, null);
 });
 
 test("sweetRows today filter drops past departures", () => {
@@ -154,7 +154,7 @@ test("affordRows dedupes to the cheapest option per origin-dest-cabin and unions
 // --- taxes / tax-honest cpp --------------------------------------------------
 test("sweetRows makes cpp tax-honest when fare and tax share a currency", () => {
   const recs = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000, { taxes: 8650 }) }, { distance: 4000, taxesCurrency: "CAD" })];
-  const r = sweetRows(recs, S(), { autoFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
+  const r = sweetRows(recs, S(), { manualFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
   assert.equal(r.taxes, 86.5);
   assert.equal(r.taxesCurrency, "CAD");
   assert.equal(r.cppIsNet, true);
@@ -163,12 +163,12 @@ test("sweetRows makes cpp tax-honest when fare and tax share a currency", () => 
 
 test("sweetRows falls back to gross cpp when currencies differ or taxes are unknown", () => {
   const usd = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000, { taxes: 8650 }) }, { distance: 4000, taxesCurrency: "USD" })];
-  const diff = sweetRows(usd, S(), { autoFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
+  const diff = sweetRows(usd, S(), { manualFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
   assert.equal(diff.cppIsNet, false);
   assert.equal(diff.cpp, (900 * 100) / 60000); // can't subtract a USD tax from a CAD fare
 
   const noTax = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000) }, { distance: 4000 })]; // pre-tax cache
-  const g = sweetRows(noTax, S(), { autoFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
+  const g = sweetRows(noTax, S(), { manualFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
   assert.equal(g.taxes, null);
   assert.equal(g.cppIsNet, false);
   assert.equal(g.cpp, (900 * 100) / 60000);
@@ -219,7 +219,7 @@ test("roundTripRows computes round-trip cpp from both directional fares", () => 
     rec("NRT", "YVR", "2026-07-09", { J: cab(60000, { taxes: 9000 }) }, { ...RET, taxesCurrency: "CAD" }),
   ];
   const { rows } = roundTripRows(recs, S(), { origin: "YVR", dest: "NRT", cabin: "J", minNights: 3, maxNights: 21, today: "2026-06-01",
-    autoFares: { "YVR-NRT-J": 3200, "NRT-YVR-J": 3000 }, faresCurrency: "CAD" });
+    manualFares: { "YVR-NRT-J": 3200, "NRT-YVR-J": 3000 }, faresCurrency: "CAD" });
   assert.equal(rows[0].rtFare, 6200);
   assert.equal(rows[0].totalTaxes, 220);                       // (13000 + 9000) / 100
   assert.equal(rows[0].cppIsNet, true);

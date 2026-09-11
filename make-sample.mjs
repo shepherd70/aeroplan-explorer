@@ -46,16 +46,6 @@ const keepDest = new Set(
 );
 recs = recs.filter((r) => keepDest.has(r.destination));
 
-// Trim any cash fares to the kept routes.
-let cashFares = null;
-if (cache.cashFares) {
-  cashFares = {};
-  for (const [k, v] of Object.entries(cache.cashFares)) {
-    const [o, d] = k.split("-");
-    if (keepOrigin.has(o) && keepDest.has(d)) cashFares[k] = v;
-  }
-}
-
 const out = {
   meta: {
     ...cache.meta,
@@ -64,7 +54,6 @@ const out = {
     sampleNote: `Trimmed preview (${CONFIG.origins.join(", ")} · ${keepDest.size} destinations). Run "node ingest.mjs" for live data.`,
   },
   records: recs,
-  ...(cashFares && Object.keys(cashFares).length ? { cashFares } : {}),
 };
 
 const json = JSON.stringify(out);
