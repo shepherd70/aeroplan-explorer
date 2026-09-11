@@ -17,7 +17,8 @@ test("normalize maps Route fields, uppercases codes, trims the date", () => {
   assert.equal(rec.originRegion, "North America");
   assert.equal(rec.destinationRegion, "Asia");
   assert.equal(rec.distance, 4685);
-  assert.deepEqual(rec.cabins.J, { available: true, miles: 60000, directMiles: 0, seats: 4, direct: true, airlines: "NH", taxes: 0 });
+  assert.deepEqual(rec.cabins.J, { available: true, miles: 60000, directMiles: 0, seats: 4, direct: true, airlines: "NH", taxes: 0,
+    directSeats: 0, directTaxes: 0, directAirlines: "" });
 });
 
 test("normalize parses comma-formatted mileage strings", () => {
@@ -65,4 +66,23 @@ test("hasAnyCabin is true only with an available, priced cabin", () => {
   const no = normalize({ Date: "2026-07-01", OriginAirport: "A", DestinationAirport: "B", WMileageCost: "30000", WAvailable: false });
   assert.equal(hasAnyCabin(yes), true);
   assert.equal(hasAnyCabin(no), false);
+});
+
+test("normalize captures the direct-only seats, taxes and airlines next to the direct price", () => {
+  const rec = normalize({
+    Date: "2026-10-11", OriginAirport: "YYZ", DestinationAirport: "LHR", TaxesCurrency: "CAD",
+    // cheapest overall is a connection; the nonstop costs more, has fewer seats, different taxes/carrier
+    JAvailable: true, JMileageCost: 70000, JRemainingSeats: 5, JTotalTaxes: 15282, JAirlines: "AC, LH",
+    JDirect: true, JDirectMileageCost: 186800, JDirectRemainingSeats: 2, JDirectTotalTaxes: 4680, JDirectAirlines: "AC",
+    // economy: no nonstop at all
+    YAvailable: true, YMileageCost: 41400, YRemainingSeats: 7, YTotalTaxes: 15152, YAirlines: "AC, UA", YDirect: false,
+  });
+  assert.deepEqual(rec.cabins.J, {
+    available: true, miles: 70000, directMiles: 186800, seats: 5, direct: true, airlines: "AC, LH", taxes: 15282,
+    directSeats: 2, directTaxes: 4680, directAirlines: "AC",
+  });
+  assert.equal(rec.cabins.Y.directSeats, 0);
+  assert.equal(rec.cabins.Y.directTaxes, 0);
+  assert.equal(rec.cabins.Y.directAirlines, "");
+  assert.equal(rec.cabins.F.directAirlines, "", "absent cabin still has the full shape");
 });
