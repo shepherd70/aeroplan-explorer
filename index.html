@@ -812,9 +812,10 @@ function renderGrid() {
   for (const r of recs) {
     if (settings.start && r.date < settings.start) continue;
     if (settings.end && r.date > settings.end) continue;
-    const c = r.cabins?.[X];
+    let c = r.cabins?.[X];
     if (c && c.available && c.miles > 0) {
-      if (settings.direct && !c.direct) continue;
+      // Direct only: show the nonstop's own price/seats/taxes, not the cheapest (maybe connecting) itinerary's.
+      if (settings.direct) { if (!c.direct) continue; c = Explore.directView(c); }
       if (settings.seats > 0 && c.seats < settings.seats) continue;
       if (!byDate[r.date] || c.miles < byDate[r.date].miles) byDate[r.date] = { ...c, _cur: r.taxesCurrency || "" };
     }
