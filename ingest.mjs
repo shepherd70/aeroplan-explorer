@@ -94,14 +94,12 @@ async function main() {
   let quotaRemaining = null;
   let shapeLogged = false;
 
-  // Carry forward any cash fares added by enrich-fares.mjs so refreshing availability
-  // doesn't wipe them (re-run enrich-fares.mjs to update the fares themselves).
-  let preservedFares = null, preservedFaresMeta = null, preservedHistory = null;
+  // Carry forward the per-route history from the previous cache so refreshing
+  // availability extends the series instead of restarting it.
+  let preservedHistory = null;
   if (existsSync(CONFIG.outFile)) {
     try {
       const old = JSON.parse(readFileSync(CONFIG.outFile, "utf8"));
-      preservedFares = old.cashFares || null;
-      preservedFaresMeta = old.meta?.fares || null;
       preservedHistory = old.history || null;
     } catch { /* ignore unreadable/old cache */ }
   }
@@ -200,11 +198,11 @@ async function main() {
   } finally {
     // Always persist whatever we collected — a mid-run failure shouldn't waste the
     // quota already spent or discard pages already fetched.
-    writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFaresMeta, preservedHistory);
+    writeCache(byId, apiCalls, quotaRemaining, preservedHistory);
   }
 }
 
-function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFaresMeta, preservedHistory) {
+function writeCache(byId, apiCalls, quotaRemaining, preservedHistory) {
   const records = [...byId.values()].sort(
     (a, b) =>
       (a.origin || "").localeCompare(b.origin || "") ||
@@ -231,18 +229,15 @@ function writeCache(byId, apiCalls, quotaRemaining, preservedFares, preservedFar
       recordCount: records.length,
       apiCallsUsed: apiCalls,
       quotaRemainingAtEnd: quotaRemaining,
-      ...(preservedFaresMeta ? { fares: preservedFaresMeta } : {}),
     },
     records,
   };
-  if (preservedFares) cache.cashFares = preservedFares;
   if (history && Object.keys(history).length) cache.history = history;
 
   writeFileSync(CONFIG.outFile, JSON.stringify(cache, null, 0));
   console.log(`\n✅ Wrote ${records.length} records to ${CONFIG.outFile}`);
   console.log(`   API calls used: ${apiCalls}` + (quotaRemaining != null ? `, ~${quotaRemaining} left today` : ""));
   if (cache.history) console.log(`   History: ${Object.keys(cache.history).length} route+cabin series tracked.`);
-  if (preservedFares) console.log(`   Kept ${Object.keys(preservedFares).length} cash fares (re-run enrich-fares.mjs to refresh).`);
   if (!records.length) {
     console.log("   (No records — widen the date window or origin regions in CONFIG.)");
   } else {
@@ -350,4 +345,4 @@ function sleep(ms) {
 }
 
 // Exported for unit tests. Importing this file does NOT run the ingester (see isMain).
-export { normalize, toInt, hasAnyCabin };
+export { normalize, toInt, hasAnyCabin, loadApiKey, readRemainingQuota, sleep };

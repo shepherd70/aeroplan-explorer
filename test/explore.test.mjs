@@ -68,18 +68,18 @@ test("discoverRows aggregates cheapest-per-cabin, date count, best origin, direc
 });
 
 // --- sweetRows: value math + quantile ---------------------------------------
-test("sweetRows computes mpm, cpp (auto + manual override), estValue, beatsValuation", () => {
+test("sweetRows computes mpm, cpp from a manual fare, estValue, beatsValuation", () => {
   const recs = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000) }, { distance: 4000 })];
-  const auto = sweetRows(recs, S({ pointValue: 1.5 }), { autoFares: { "YVR-NRT-J": 900 }, manualFares: {}, today: "2026-06-01" })[0];
-  assert.equal(auto.mpm, (60000 / 4000) * 1000);          // 15000
-  assert.equal(auto.cpp, (900 * 100) / 60000);            // 1.5
-  assert.equal(auto.fareAuto, true);
-  assert.equal(auto.estValue, (60000 * 1.5) / 100);       // 900
-  assert.equal(auto.beatsValuation, true);                // 1.5 >= 1.5
+  const r = sweetRows(recs, S({ pointValue: 1.5 }), { manualFares: { "YVR-NRT-J": 900 }, today: "2026-06-01" })[0];
+  assert.equal(r.mpm, (60000 / 4000) * 1000);          // 15000
+  assert.equal(r.cpp, (900 * 100) / 60000);            // 1.5
+  assert.equal(r.fareValue, 900);
+  assert.equal(r.estValue, (60000 * 1.5) / 100);       // 900
+  assert.equal(r.beatsValuation, true);                // 1.5 >= 1.5
 
-  const manual = sweetRows(recs, S(), { autoFares: { "YVR-NRT-J": 900 }, manualFares: { "YVR-NRT-J": 1200 }, today: "2026-06-01" })[0];
-  assert.equal(manual.cpp, (1200 * 100) / 60000);         // 2.0 — manual overrides auto
-  assert.equal(manual.fareAuto, false);
+  const none = sweetRows(recs, S(), { today: "2026-06-01" })[0];
+  assert.equal(none.fareValue, null);
+  assert.equal(none.cpp, null);
 });
 
 test("sweetRows today filter drops past departures", () => {
@@ -154,7 +154,7 @@ test("affordRows dedupes to the cheapest option per origin-dest-cabin and unions
 // --- taxes / tax-honest cpp --------------------------------------------------
 test("sweetRows makes cpp tax-honest when fare and tax share a currency", () => {
   const recs = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000, { taxes: 8650 }) }, { distance: 4000, taxesCurrency: "CAD" })];
-  const r = sweetRows(recs, S(), { autoFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
+  const r = sweetRows(recs, S(), { manualFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
   assert.equal(r.taxes, 86.5);
   assert.equal(r.taxesCurrency, "CAD");
   assert.equal(r.cppIsNet, true);
@@ -163,12 +163,12 @@ test("sweetRows makes cpp tax-honest when fare and tax share a currency", () => 
 
 test("sweetRows falls back to gross cpp when currencies differ or taxes are unknown", () => {
   const usd = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000, { taxes: 8650 }) }, { distance: 4000, taxesCurrency: "USD" })];
-  const diff = sweetRows(usd, S(), { autoFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
+  const diff = sweetRows(usd, S(), { manualFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
   assert.equal(diff.cppIsNet, false);
   assert.equal(diff.cpp, (900 * 100) / 60000); // can't subtract a USD tax from a CAD fare
 
   const noTax = [rec("YVR", "NRT", "2026-07-01", { J: cab(60000) }, { distance: 4000 })]; // pre-tax cache
-  const g = sweetRows(noTax, S(), { autoFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
+  const g = sweetRows(noTax, S(), { manualFares: { "YVR-NRT-J": 900 }, today: "2026-06-01", faresCurrency: "CAD" })[0];
   assert.equal(g.taxes, null);
   assert.equal(g.cppIsNet, false);
   assert.equal(g.cpp, (900 * 100) / 60000);
@@ -219,7 +219,7 @@ test("roundTripRows computes round-trip cpp from both directional fares", () => 
     rec("NRT", "YVR", "2026-07-09", { J: cab(60000, { taxes: 9000 }) }, { ...RET, taxesCurrency: "CAD" }),
   ];
   const { rows } = roundTripRows(recs, S(), { origin: "YVR", dest: "NRT", cabin: "J", minNights: 3, maxNights: 21, today: "2026-06-01",
-    autoFares: { "YVR-NRT-J": 3200, "NRT-YVR-J": 3000 }, faresCurrency: "CAD" });
+    manualFares: { "YVR-NRT-J": 3200, "NRT-YVR-J": 3000 }, faresCurrency: "CAD" });
   assert.equal(rows[0].rtFare, 6200);
   assert.equal(rows[0].totalTaxes, 220);                       // (13000 + 9000) / 100
   assert.equal(rows[0].cppIsNet, true);
@@ -327,4 +327,61 @@ test("integration: sample-cache.json yields self-consistent results", () => {
   const lo = affordRows(recs, S({ balance: 40000 })).anyDest.size;
   const hi = affordRows(recs, S({ balance: 120000 })).anyDest.size;
   assert.ok(hi >= lo, "more balance reaches at least as many destinations");
+});
+
+// --- itinerary detail (trips.cache.json) helpers -----------------------------
+const trip = (over = {}) => Object.assign(
+  { id: "t", cabin: "J", flights: ["AC836", "LH2476"], via: ["MUC"], aircraft: ["Airbus A330-300", "Airbus A320neo"],
+    dep: "2026-10-11T17:40", arr: "2026-10-12T15:40", duration: 1020, stops: 1, miles: 186800, taxes: 15282, seats: 5 }, over);
+const TRIPS = { meta: { schema: 1 }, routes: { "YYZ-LHR": { pulledAt: "2026-09-11T12:00:00Z", dates: {
+  "2026-10-11": [
+    trip({ id: "slow-cheap", miles: 100000, duration: 1200 }),
+    trip({ id: "fast-cheap", miles: 100000, duration: 900 }),
+    trip({ id: "nonstop", via: [], stops: 0, miles: 120000, duration: 420, seats: 2 }),
+    trip({ id: "eco", cabin: "Y", miles: 40000 }),
+  ],
+  "2026-10-12": [trip({ id: "next-day" })],
+} } } };
+
+test("tripsFor returns a date+cabin's itineraries cheapest-then-shortest, honoring direct/seats filters", () => {
+  const { tripsFor } = Explore;
+  assert.deepEqual(tripsFor(TRIPS, "YYZ", "LHR", "2026-10-11", "J", S()).map((t) => t.id), ["fast-cheap", "slow-cheap", "nonstop"]);
+  assert.deepEqual(tripsFor(TRIPS, "YYZ", "LHR", "2026-10-11", "J", S({ direct: true })).map((t) => t.id), ["nonstop"]);
+  assert.deepEqual(tripsFor(TRIPS, "YYZ", "LHR", "2026-10-11", "J", S({ seats: 3 })).map((t) => t.id), ["fast-cheap", "slow-cheap"]);
+  assert.deepEqual(tripsFor(TRIPS, "YYZ", "LHR", "2026-10-11", "Y", S()).map((t) => t.id), ["eco"]);
+  // "not pulled" / "no such date" / "no file" all come back as an empty list, never null
+  assert.deepEqual(tripsFor(TRIPS, "YYZ", "LHR", "2026-10-13", "J", S()), []);
+  assert.deepEqual(tripsFor(TRIPS, "YVR", "NRT", "2026-10-11", "J", S()), []);
+  assert.deepEqual(tripsFor(null, "YYZ", "LHR", "2026-10-11", "J", S()), []);
+});
+
+test("routeDetail reports pull age and coverage, or null when the route was never pulled", () => {
+  const { routeDetail } = Explore;
+  assert.deepEqual(routeDetail(TRIPS, "YYZ", "LHR"), { pulledAt: "2026-09-11T12:00:00Z", dateCount: 2, tripCount: 5 });
+  assert.equal(routeDetail(TRIPS, "YVR", "NRT"), null);
+  assert.equal(routeDetail(null, "YYZ", "LHR"), null);
+});
+
+test("layoverMinutes derives connection waits from segments, null without them", () => {
+  const { layoverMinutes } = Explore;
+  const withSegs = trip({ segments: [
+    { flight: "AC836", from: "YYZ", to: "MUC", dep: "2026-10-11T17:40", arr: "2026-10-12T07:45", duration: 485 },
+    { flight: "LH2476", from: "MUC", to: "LHR", dep: "2026-10-12T14:35", arr: "2026-10-12T15:40", duration: 125 },
+  ] });
+  assert.deepEqual(layoverMinutes(withSegs), [{ at: "MUC", minutes: 410 }]);
+  assert.deepEqual(layoverMinutes(trip({ segments: [{ flight: "AC1", from: "YYZ", to: "LHR", dep: "2026-10-11T17:40", arr: "2026-10-12T05:40" }] })), []);
+  assert.equal(layoverMinutes(trip()), null);
+});
+
+test("cheapestRouting picks the cheapest itinerary for a route (optionally one cabin/date) and reports its routing", () => {
+  const { cheapestRouting } = Explore;
+  assert.deepEqual(cheapestRouting(TRIPS, "YYZ", "LHR", { cabin: "J" }),
+    { id: "fast-cheap", date: "2026-10-11", cabin: "J", stops: 1, via: ["MUC"], miles: 100000, duration: 900, flights: ["AC836", "LH2476"] });
+  assert.equal(cheapestRouting(TRIPS, "YYZ", "LHR", { cabin: "J", date: "2026-10-12" }).id, "next-day");
+  assert.equal(cheapestRouting(TRIPS, "YYZ", "LHR", { cabin: ["Y", "J"] }).id, "eco", "cabin may be a list");
+  assert.equal(cheapestRouting(TRIPS, "YYZ", "LHR", {}).id, "eco", "no cabin filter = any cabin");
+  assert.equal(cheapestRouting(TRIPS, "YYZ", "LHR", { cabin: "F" }), null);
+  assert.equal(cheapestRouting(TRIPS, "YYZ", "LHR", { cabin: "J", date: "2026-10-13" }), null);
+  assert.equal(cheapestRouting(TRIPS, "YVR", "NRT", { cabin: "J" }), null, "route never pulled");
+  assert.equal(cheapestRouting(null, "YYZ", "LHR", { cabin: "J" }), null);
 });

@@ -4,16 +4,19 @@ Browse what your Aeroplan points can actually get you — by **destination**, by
 **value**, by **date flexibility**, and by **what your balance can book right now** —
 instead of Air Canada's search-one-route-and-one-date-at-a-time website.
 
-Two pieces:
+Three pieces:
 
 - **`ingest.mjs`** — a small Node script that pulls Aeroplan award availability from the
   [seats.aero](https://seats.aero) Partner API and writes a local `aeroplan-cache.json`.
-- **`index.html`** — a self-contained page that reads that cache and gives you four
+- **`detail.mjs`** — an on-demand puller for **flight-level itineraries** (flight numbers,
+  connections, aircraft, times, duration, optionally exact layovers) for the routes you
+  care about; writes a second, smaller `trips.cache.json`.
+- **`index.html`** — a self-contained page that reads those caches and gives you six
   exploration views, fully offline. No server, no build step.
 
-The two are decoupled: the ingester normalizes the API response into a stable cache
-schema, and the explorer only ever reads that schema. If seats.aero changes a field name,
-you only fix the ingester.
+They are decoupled: the scripts normalize the API responses into stable cache schemas, and
+the explorer only ever reads those schemas. If seats.aero changes a field name, you only
+fix the script.
 
 ---
 
@@ -44,53 +47,65 @@ you only fix the ingester.
    **↻ Reload**. Chrome/Edge may re-prompt for read permission once per session, then it
    re-reads the cache.
 
-> A small sample `sample-cache.json` ships with the repo — open it to click around before
-> you run the ingester. `node ingest.mjs` writes the **live** `aeroplan-cache.json`
-> (gitignored); open that once you have it. (Regenerate the sample with `node make-sample.mjs`.)
+5. **Pull itineraries for the routes you care about** (optional, one API request per route):
+   ```
+   node detail.mjs YYZ-LHR YVR-NRT
+   ```
+   This writes `trips.cache.json`. Click **Open itineraries…** in the header and pick it;
+   then, in the **Flexible date grid**, click any date to see that day's flights. See
+   [Itinerary detail](#itinerary-detail-flights-connections-aircraft-layovers) below.
+
+> Small samples ship with the repo — `sample-cache.json` and `sample-trips.json` — so you
+> can click around before you run anything. `node ingest.mjs` / `node detail.mjs` write the
+> **live** `aeroplan-cache.json` / `trips.cache.json` (both gitignored); open those once you
+> have them. (Regenerate the samples with `node make-sample.mjs`.)
 
 ---
 
-## Optional: cash fares → true cents-per-point
+## Cash fares → true cents-per-point
 
-The Sweet-spot finder lets you type a cash fare on any row to get exact ¢/pt. To populate
-those automatically, run the optional enrichment step against the **Amadeus Self-Service
-API**:
-
-1. **Get free credentials** at [developers.amadeus.com](https://developers.amadeus.com) →
-   create a Self-Service app → copy its API key and secret into `.env`:
-   ```
-   AMADEUS_CLIENT_ID=your_amadeus_key
-   AMADEUS_CLIENT_SECRET=your_amadeus_secret
-   ```
-2. **Enrich** (run *after* `node ingest.mjs`):
-   ```
-   node enrich-fares.mjs
-   ```
-   It prices the **cheapest-award date per route + cabin** (one Amadeus call each, capped
-   at `maxFares`), merges the fares into `aeroplan-cache.json`, then you **↻ Reload**.
-
-In the explorer, auto fares show as italic blue in the **Cash $** column and drive the
-**¢/pt** value automatically (green when they beat your **Point value ¢**). Type to
-override any cell; clear it to revert to the auto fare. Re-running `node ingest.mjs` keeps
-your fares; re-run `enrich-fares.mjs` to refresh them.
+The Sweet-spot finder lets you type a cash fare on any row to get exact ¢/pt (green when it
+beats your **Point value ¢**). Fares are saved in the browser, keyed by route + cabin, so
+they survive a **↻ Reload**. Clear a cell to remove its fare.
 
 **¢/pt is tax-honest.** Redeeming still costs the award's cash taxes & carrier surcharges
 out of pocket, so the points only "buy" *(cash fare − award taxes)*. The Sweet-spot finder
 shows those taxes in their own **Taxes** column — pulled straight from seats.aero per cabin,
-no extra API calls — and nets them out of ¢/pt whenever the fare and tax share a currency
-(hover a ¢/pt cell to see the basis). If the currencies differ, ¢/pt falls back to gross.
-Taxes appear only after an ingest that captured them, so re-run `node ingest.mjs` if your
-**Taxes** column is empty.
+no extra API calls — and nets them out of ¢/pt. Enter fares in the same currency as the
+**Taxes** column (CAD for Aeroplan; the input shows it as a placeholder) so the netting
+applies; hover a ¢/pt cell to see the basis. Taxes appear only after an ingest that captured
+them, so re-run `node ingest.mjs` if your **Taxes** column is empty.
 
-Notes: the free **test** host (`test.api.amadeus.com`) has limited/cached data, so some
-routes return no fare — set `AMADEUS_HOSTNAME=api.amadeus.com` in `.env` for full coverage
-(paid past a monthly free quota). Default currency is CAD (edit `CONFIG.currency` in
-`enrich-fares.mjs`); ¢/pt is then "cents of that currency per point."
+> Auto-priced fares used to come from the Amadeus Self-Service API, which Amadeus shut down
+> in July 2026. That enrichment step has been removed; fares are manual now.
 
-A fare stays in the cache until a later run re-prices it; if a route is re-priced and now
-returns *no* fare it's dropped, but a transient API error leaves the prior fare untouched.
-The Sweet-spot tab shows the last enrich date and how many routes were re-priced, so you can
-tell how fresh the auto fares are.
+---
+
+## Itinerary detail (flights, connections, aircraft, layovers)
+
+The main pull tells you *that* a cabin is bookable on a date and roughly how (nonstop or
+not, which carriers). `node detail.mjs` adds *how exactly*: every itinerary seats.aero knows
+for a route and date — flight numbers, connection airports, aircraft, local departure and
+arrival times, total duration, seats, points and taxes per itinerary.
+
+- **Per route, on demand.** `node detail.mjs YYZ-LHR YVR-NRT` costs one API request per
+  route for the whole date window (the main cache's window by default; `--start` / `--end`
+  override). Re-running a route replaces only that route's entry; others are kept.
+- **Where it shows.** In the **Flexible date grid**, click a date cell: a panel lists that
+  day's itineraries for the selected cabin, cheapest first then shortest. The **Direct only**
+  and **Min seats** filters apply there too. Cell tooltips say how the cheapest one routes
+  ("via MUC"). Routes you haven't pulled show the exact command to run.
+- **Exact layovers.** The per-route pull gives total journey time and the connection
+  airports, but not per-segment times. For one date, `node detail.mjs YYZ-LHR --date
+  2026-10-11` fetches segment-level detail (one request per route + date) and the panel gains
+  a **Layovers** column ("MUC 6h 50m"). Needs that route + date in `aeroplan-cache.json`.
+- **Watchlist shortcut.** The Watchlist tab shows a ready-made `node detail.mjs …` command
+  for all starred routes, with a **Copy** button, and marks which routes have detail and how
+  old it is.
+- **Freshness.** The header pill shows how many routes have detail and the age of the
+  oldest pull (amber past 3 days). Detail is a snapshot per route — re-run to refresh.
+- **Times are local** to each airport (as the airline publishes them); "+1" marks an arrival
+  the next day.
 
 ---
 
@@ -133,7 +148,8 @@ remaining-calls header, prints it as it goes, and stops before draining it.
    cheapest-points history and flags drops (▼), rises (▲), and newly-available space (NEW)
    since your last pull.
 3. **Flexible date grid** — pick a route, see a month-by-month calendar heatmap of points
-   cost and seats. The fix for "I don't have fixed dates."
+   cost and seats. The fix for "I don't have fixed dates." With itinerary detail loaded,
+   click a date to see every flight option that day (see **Itinerary detail** above).
 4. **What can I book now?** — enter your balance; see destinations reachable **one-way**
    per cabin and a list of everything you can afford today, each with its **Taxes** (the cash
    you still pay on top — points can't cover it). Points are one-way; a round trip needs
@@ -145,7 +161,8 @@ remaining-calls header, prints it as it goes, and stops before draining it.
 6. **Watchlist** — star any route in the Sweet-spot finder and it lands here with its current
    cheapest points, how many dates are available, an optional points **target**, a status
    (available / under target / over), and its trend since your last pull. Stars and targets are saved in your browser; the list is
-   independent of the filters above.
+   independent of the filters above. It also hands you the `node detail.mjs …` command for
+   every starred route (with a **Copy** button) and shows which routes have itinerary detail.
 
 Filters at the top (home airports, cabins, dates, seats, max points, balance, point value,
 direct-only, **round trip**, within-balance) apply to all views except the Watchlist and are remembered
@@ -174,8 +191,11 @@ direction separately, so it's an estimate — confirm both legs).
 - **History is per pull.** `cache.history` keeps a short series (cheapest points + # dates) per
   route+cabin — one point per `node ingest.mjs` run, capped and pruned. The Trend column needs
   ≥2 pulls and a stable pull config to be meaningful; switch it off with `trackHistory: false`.
-- **Browser support:** "Open cache file…" uses the File System Access API (Chrome/Edge).
-  Other browsers fall back to a normal file picker (no auto-reload).
+- **Itinerary detail is per route.** `trips.cache.json` only holds the routes you pulled with
+  `node detail.mjs`, each with its own pull time. Itinerary times are local wall-clock as
+  published; seats and prices per itinerary are as of that pull.
+- **Browser support:** "Open cache file…" and "Open itineraries…" use the File System Access
+  API (Chrome/Edge). Other browsers fall back to a normal file picker (no auto-reload).
 
 ---
 
@@ -187,10 +207,23 @@ Still zero-dependency, still no build step. The explorer's pure data transforms 
 same logic is unit-tested.
 
 ```
-node --test          # runs test/*.test.mjs (normalize + explorer transforms)
-node make-sample.mjs  # regenerate the committed sample-cache.json from a full pull
+node --test           # runs test/*.test.mjs (normalize + explorer transforms + detail puller)
+node make-sample.mjs  # regenerate the committed sample-cache.json (+ sample-trips.json) from full pulls
 ```
 
-- `lib/explore.js` — pure: filtering, destination/sweet-spot/affordability aggregation. No DOM.
-- `ingest.mjs` exports `normalize()` (guarded so importing it doesn't run an ingest).
+- `lib/explore.js` — pure: filtering, destination/sweet-spot/affordability aggregation, and
+  the itinerary helpers (`tripsFor`, `routeDetail`, `layoverMinutes`). No DOM.
+- `ingest.mjs` exports `normalize()` plus the API helpers (guarded so importing it doesn't run an ingest).
+- `detail.mjs` exports `normalizeTrip()`, `parseArgs()`, `pullRoute()`, `pullTrips()` and the
+  merge helpers, guarded the same way; `pullRoute`/`pullTrips` take an injectable `fetchImpl` for tests.
 - `index.html` keeps all rendering/DOM/event code and calls `Explore.*` for the data work.
+
+`trips.cache.json` schema (one entry per pulled route; `segments` only after a `--date` pull):
+```
+{ meta: { source, generatedAt, schema: 1 },
+  routes: { "YYZ-LHR": { pulledAt, dateWindow: { start, end },
+    dates: { "2026-10-11": [ { id, availabilityId, cabin: "J", flights: ["AC836","LH2476"], carriers,
+      via: ["MUC"], aircraft: [...], fareClasses: [...], dep: "2026-10-11T17:40", arr: "2026-10-12T15:40",
+      duration: 1020, stops: 1, miles: 186800, taxes: 15282, taxesCurrency: "CAD", seats: 5,
+      segments?: [ { flight, from, to, dep, arr, duration, aircraft, aircraftCode, fareClass } ] } ] } } } }
+```
