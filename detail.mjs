@@ -4,15 +4,39 @@
 // chosen routes from the seats.aero Partner API and writes a second, gitignored cache
 // (trips.cache.json) that the explorer reads alongside aeroplan-cache.json.
 //
-// Run:   node detail.mjs YYZ-LHR YVR-NRT            (one API request per route)
+// Run:   node detail.mjs YYZ-LHR YVR-NRT [--start YYYY-MM-DD] [--end YYYY-MM-DD]
+//        One API request per route (a second only if the window exceeds one page).
+//        The date window defaults to the one in aeroplan-cache.json, else today → +90 days.
 // Needs: a seats.aero Pro API key in env var SEATS_AERO_KEY (or a local .env file).
 //
 // Zero dependencies — uses Node 18+ native fetch.
 
+import { writeFileSync, readFileSync, existsSync, openSync, readSync, closeSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { toInt } from "./ingest.mjs"; // importing ingest.mjs never runs the ingester
+import { dirname, join } from "node:path";
+// Importing ingest.mjs never runs the ingester (it is guarded the same way this file is).
+import { toInt, loadApiKey, readRemainingQuota, sleep } from "./ingest.mjs";
 
-// Run only when executed directly — never when a test imports normalizeTrip().
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// ---------------------------------------------------------------------------
+// CONFIG — edit these to change how detail is pulled.
+// ---------------------------------------------------------------------------
+const CONFIG = {
+  base: "https://seats.aero/partnerapi",
+  source: "aeroplan",
+  take: 500,                     // records (dates) per page; a 90-day window fits in one
+  maxPages: 20,                  // backstop against a runaway loop
+  maxRetries: 4,                 // retries on 429/5xx (exponential backoff, honors Retry-After)
+  pauseMs: 300,                  // polite delay between requests
+  quotaFloor: 25,                // stop early if remaining daily calls drops below this
+  mainCache: join(__dirname, "aeroplan-cache.json"), // only read for its date window
+  outFile: join(__dirname, "trips.cache.json"),
+};
+const SCHEMA = 1;
+const USAGE = "usage: node detail.mjs ORIG-DEST [ORIG-DEST …] [--start YYYY-MM-DD] [--end YYYY-MM-DD]";
+
+// Run only when executed directly — never when a test imports the helpers below.
 if (isMain(import.meta.url)) {
   main().catch((err) => {
     console.error("\n❌ Detail pull failed:", err?.message || err);
@@ -25,8 +49,185 @@ function isMain(metaUrl) {
 }
 
 async function main() {
-  console.error("detail.mjs: CLI not implemented yet (see tasks/plan.md, Task 2).");
-  process.exit(1);
+  let args;
+  try { args = parseArgs(process.argv.slice(2)); }
+  catch (e) { console.error(`❌ ${e.message}`); process.exit(1); }
+
+  const apiKey = loadApiKey();
+  if (!apiKey) {
+    console.error(
+      "❌ No API key. Set SEATS_AERO_KEY in your environment or in a .env file " +
+        "next to this script (see .env.example)."
+    );
+    process.exit(1);
+  }
+
+  const win = { ...defaultWindow(CONFIG.mainCache), ...(args.start && { start: args.start }), ...(args.end && { end: args.end }) };
+  console.log(`Aeroplan Award Explorer — itinerary detail`);
+  console.log(`  routes : ${args.routes.map((r) => `${r.origin}-${r.dest}`).join(", ")}`);
+  console.log(`  dates  : ${win.start} → ${win.end}`);
+  console.log("");
+
+  const existing = readExisting(CONFIG.outFile);
+  const pulled = {};
+  let apiCalls = 0, quotaRemaining = null;
+  try {
+    for (const { origin, dest } of args.routes) {
+      if (quotaRemaining != null && quotaRemaining <= CONFIG.quotaFloor) {
+        console.log(`  ⚠ Skipping ${origin}-${dest} — only ~${quotaRemaining} API calls left today.`);
+        continue;
+      }
+      const r = await pullRoute({ origin, dest, start: win.start, end: win.end, apiKey });
+      apiCalls += r.apiCalls;
+      if (r.quotaRemaining != null) quotaRemaining = r.quotaRemaining;
+      pulled[`${origin}-${dest}`] = { pulledAt: new Date().toISOString(), dateWindow: { ...win }, dates: r.dates };
+      const byCabin = {};
+      for (const ts of Object.values(r.dates)) for (const t of ts) byCabin[t.cabin] = (byCabin[t.cabin] || 0) + 1;
+      const cab = ["F", "J", "W", "Y"].filter((X) => byCabin[X]).map((X) => `${X} ${byCabin[X].toLocaleString()}`).join(" · ");
+      console.log(`  ✅ ${origin}-${dest}: ${Object.keys(r.dates).length} dates, ${r.tripCount.toLocaleString()} itineraries` +
+        (cab ? ` (${cab})` : "") + (quotaRemaining != null ? ` · ~${quotaRemaining} calls left` : ""));
+    }
+  } finally {
+    // Persist whatever was collected — a mid-run failure shouldn't waste the quota spent.
+    if (Object.keys(pulled).length) {
+      const cache = mergeRoutes(existing, pulled, new Date().toISOString());
+      writeFileSync(CONFIG.outFile, JSON.stringify(cache));
+      console.log(`\n✅ Wrote ${Object.keys(cache.routes).length} route(s) to ${CONFIG.outFile}`);
+      console.log(`   API calls used: ${apiCalls}` + (quotaRemaining != null ? `, ~${quotaRemaining} left today` : ""));
+    }
+  }
+}
+
+// --- CLI args -----------------------------------------------------------------
+
+// ["yyz-lhr", "--start", "2026-10-01"] -> { routes: [{origin, dest}], start?, end? }.
+// Throws a one-line message on anything malformed.
+function parseArgs(argv) {
+  const out = { routes: [] };
+  const seen = new Set();
+  // Format AND a real calendar date — "2026-13-01" would otherwise burn a request on a 400.
+  const isDate = (v) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v || "")) return false;
+    const d = new Date(v + "T00:00:00Z");
+    return !isNaN(d) && d.toISOString().slice(0, 10) === v;
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--start" || a === "--end") {
+      const v = argv[++i];
+      if (!isDate(v)) throw new Error(`${a} needs a YYYY-MM-DD date (got "${v ?? ""}")\n${USAGE}`);
+      out[a.slice(2)] = v;
+    } else if (a.startsWith("-")) {
+      throw new Error(`Unknown option ${a}\n${USAGE}`);
+    } else {
+      const m = a.toUpperCase().match(/^([A-Z0-9]{3})-([A-Z0-9]{3})$/);
+      if (!m) throw new Error(`Route "${a}" must look like ORIG-DEST (e.g. YYZ-LHR)\n${USAGE}`);
+      const key = `${m[1]}-${m[2]}`;
+      if (!seen.has(key)) { seen.add(key); out.routes.push({ origin: m[1], dest: m[2] }); }
+    }
+  }
+  if (!out.routes.length) throw new Error(USAGE);
+  return out;
+}
+
+// --- pulling one route ----------------------------------------------------------
+
+// One route's itineraries for a date window, via the cached-search endpoint with trips
+// inlined. Paginates by `skip` (seats.aero's `cursor` is a constant snapshot token, not an
+// advancing pointer). `fetchImpl` is injectable for tests.
+async function pullRoute({ origin, dest, start, end, apiKey, fetchImpl = fetch, pauseMs = CONFIG.pauseMs, maxRetries = CONFIG.maxRetries }) {
+  const dates = {};
+  let apiCalls = 0, quotaRemaining = null, tripCount = 0;
+  let skip = 0, snapshot = null;
+  for (let page = 0; page < CONFIG.maxPages; page++) {
+    const params = new URLSearchParams({
+      origin_airport: origin, destination_airport: dest,
+      start_date: start, end_date: end,
+      take: String(CONFIG.take), include_trips: "true", sources: CONFIG.source,
+    });
+    if (skip > 0) params.set("skip", String(skip));
+    if (snapshot != null) params.set("cursor", String(snapshot));
+    const url = `${CONFIG.base}/search?${params.toString()}`;
+
+    let res;
+    for (let attempt = 0; ; attempt++) {
+      res = await fetchImpl(url, { headers: { "Partner-Authorization": apiKey, Accept: "application/json" } });
+      apiCalls++;
+      const remaining = readRemainingQuota(res.headers);
+      if (remaining != null) quotaRemaining = remaining;
+      if (res.ok) break;
+      if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+        const ra = parseInt(res.headers.get("retry-after") || "", 10);
+        const waitMs = Number.isFinite(ra) ? ra * 1000 : Math.min(30000, 1000 * 2 ** attempt);
+        console.warn(`  ⚠ HTTP ${res.status} on ${origin}-${dest} page ${page + 1} — retrying in ${Math.round(waitMs / 1000)}s`);
+        await sleep(waitMs);
+        continue;
+      }
+      const body = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status} ${res.statusText || ""} on ${origin}-${dest} page ${page + 1}` + (body ? `\n   ${body.slice(0, 400)}` : ""));
+    }
+
+    const json = await res.json();
+    const items = Array.isArray(json) ? json : json.data || [];
+    for (const rec of items) {
+      if (rec?.Source && rec.Source !== CONFIG.source) continue; // defensive: `sources=` should already filter
+      const date = String(rec?.Date || "").slice(0, 10);
+      if (!date) continue;
+      for (const raw of rec.AvailabilityTrips || []) {
+        const t = normalizeTrip(raw);
+        if (!t) continue;
+        (dates[date] ||= []).push(t);
+        tripCount++;
+      }
+    }
+    if (snapshot == null && !Array.isArray(json) && json.cursor != null) snapshot = json.cursor;
+    const more = Array.isArray(json) ? items.length >= CONFIG.take : (json.hasMore != null ? !!json.hasMore : items.length >= CONFIG.take);
+    skip += items.length;
+    if (!more || items.length === 0) break;
+    if (pauseMs) await sleep(pauseMs);
+  }
+  // Deterministic order: cheapest first, then shortest. Dates in calendar order.
+  const sorted = {};
+  for (const d of Object.keys(dates).sort()) {
+    sorted[d] = dates[d].sort((a, b) => a.miles - b.miles || a.duration - b.duration);
+  }
+  return { dates: sorted, apiCalls, quotaRemaining, tripCount };
+}
+
+// --- cache file -----------------------------------------------------------------
+
+// Existing trips cache (or null). A corrupt file aborts rather than being silently replaced.
+function readExisting(path) {
+  if (!existsSync(path)) return null;
+  try { return JSON.parse(readFileSync(path, "utf8")); }
+  catch { throw new Error(`${path} is not valid JSON — fix or delete it, then re-run.`); }
+}
+
+// New cache object: pulled routes replace their old entries, every other route is kept as-is.
+function mergeRoutes(existing, pulled, generatedAt) {
+  return {
+    meta: { source: CONFIG.source, generatedAt, schema: SCHEMA },
+    routes: { ...(existing?.routes || {}), ...pulled },
+  };
+}
+
+// Date window: the main cache's window when present (so detail lines up with the grid),
+// else today → +90 days. Reads only the head of the (large) cache file — meta comes first.
+function defaultWindow(mainCachePath) {
+  const today = new Date();
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const plus90 = new Date(today); plus90.setDate(plus90.getDate() + 90);
+  const fallback = { start: iso(today), end: iso(plus90) };
+  if (!existsSync(mainCachePath)) return fallback;
+  try {
+    const fd = openSync(mainCachePath, "r");
+    const buf = Buffer.alloc(4096);
+    const n = readSync(fd, buf, 0, buf.length, 0);
+    closeSync(fd);
+    const m = buf.toString("utf8", 0, n).match(/"dateWindow":\{"start":"(\d{4}-\d{2}-\d{2})","end":"(\d{4}-\d{2}-\d{2})"\}/);
+    if (m) return { start: m[1], end: m[2] };
+  } catch { /* fall through */ }
+  return fallback;
 }
 
 // --- normalization -----------------------------------------------------------
@@ -97,4 +298,4 @@ function normalizeTrip(raw) {
 }
 
 // Exported for unit tests. Importing this file does NOT run the puller (see isMain).
-export { normalizeTrip, localStamp };
+export { normalizeTrip, localStamp, parseArgs, pullRoute, mergeRoutes, defaultWindow };
