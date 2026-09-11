@@ -15,7 +15,7 @@ Plan: `tasks/plan.md`. Read-only planning done 2026-09-11; no code changed yet.
 - [ ] Schema reviewed by human
 
 ## Phase 2: Core feature
-- [ ] **Task 5** Grid cell click → itinerary panel (`#gridItins`), 3 empty states, Direct-only / Min-seats honoured, top 15 + show all, selected-cell outline, stop count in tooltips — M
+- [x] **Task 5** Grid cell click → itinerary panel (`#gridItins`), 3 empty states, Direct-only / Min-seats honoured, top 15 + show all, selected-cell outline, stop count in tooltips — M
 
 ### Checkpoint B
 - [ ] YYZ→LHR J 2026-10-11 shows AC836, LH2476 via MUC · 17h 00m · 186,800 pts
