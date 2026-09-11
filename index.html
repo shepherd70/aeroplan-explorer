@@ -114,7 +114,14 @@
   .cal .dow { font-size: 10px; color: var(--muted); text-align: center; }
   .cell { aspect-ratio: 1; border-radius: 4px; display: flex; flex-direction: column; align-items: center; justify-content: center;
     font-size: 10px; background: var(--panel2); color: var(--muted); position: relative; }
-  .cell.has { color: #04140a; font-weight: 600; cursor: default; }
+  .cell.has { color: #04140a; font-weight: 600; cursor: pointer; }
+  .cell.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .itins { margin: 6px 0 16px; }
+  .itins h4 { margin: 0 0 6px; font-size: 13px; }
+  .itins .tablewrap { max-height: 380px; }
+  .itins td.l .muted { font-weight: 400; }
+  .itins .foot { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .itins code { background: var(--chip); padding: 2px 6px; border-radius: 4px; color: var(--accent2); }
   .cell .d { font-size: 9px; opacity: .8; position: absolute; top: 1px; left: 3px; }
   .cell .m { font-size: 10px; }
   .cell.empty { opacity: .35; }
@@ -222,6 +229,7 @@
         <span class="hint" id="gridInfo"></span>
       </div>
       <div class="legend" id="gridLegend"></div>
+      <div class="itins" id="gridItins"></div>
       <div class="months" id="gridMonths"></div>
     </section>
 
@@ -379,6 +387,8 @@ const WATCHES_KEY = "aeroplan-explorer-watches-v1";
 let settings = loadSettings();
 let fileHandle = null;
 let TRIPS = null;              // parsed trips.cache.json (itinerary detail from node detail.mjs), or null
+let gridSel = null;            // { o, d, date } — the date cell selected in the grid (itinerary panel)
+let gridSelAll = false;        // show every itinerary for the selected date, not just the first 15
 let tripsHandle = null;
 const sortState = { discover: settings.sortDiscover, afford: settings.sortAfford }; // persisted via settings
 
@@ -781,6 +791,8 @@ function openGridFor(origin, dest, cabin) {
 }
 function renderGrid() {
   const o = $("gOrigin").value, d = $("gDest").value, X = $("gCabin").value;
+  if (gridSel && (gridSel.o !== o || gridSel.d !== d)) { gridSel = null; gridSelAll = false; }
+  const detailed = !!Explore.routeDetail(TRIPS, o, d);
   const recs = RECORDS.filter((r) => r.origin === o && r.destination === d);
   const byDate = {};
   for (const r of recs) {
@@ -825,7 +837,15 @@ function renderGrid() {
         const t = mx > mn ? (c.miles - mn) / (mx - mn) : 0;
         const aff = settings.balance > 0 && c.miles * tripMult() <= settings.balance;
         const k = c.miles >= 1000 ? Math.round(c.miles / 1000) + "k" : c.miles;
-        html += `<div class="cell has" style="background:${colorFor(t)}" title="${ds}: ${fmt(c.miles)} pts${c.taxes != null ? " + $" + fmt(c.taxes / 100) + (c._cur ? " " + esc(c._cur) : "") + " taxes" : ""} · ${c.seats || "?"} seats${c.direct ? " · nonstop" : ""}${c.airlines ? " · " + esc(c.airlines) : ""}">
+        // With itinerary detail, say how the cheapest one routes ("via MUC") and invite the click.
+        let routing = "";
+        if (detailed) {
+          const best = Explore.tripsFor(TRIPS, o, d, ds, X, settings)[0];
+          routing = !best ? "" : best.stops === 0 ? (c.direct ? "" : " · nonstop") : ` · via ${esc(best.via.join(", "))}`;
+          routing += " · click for itineraries";
+        }
+        const sel = gridSel && gridSel.date === ds ? " selected" : "";
+        html += `<div class="cell has${sel}" data-date="${ds}" style="background:${colorFor(t)}" title="${ds}: ${fmt(c.miles)} pts${c.taxes != null ? " + $" + fmt(c.taxes / 100) + (c._cur ? " " + esc(c._cur) : "") + " taxes" : ""} · ${c.seats || "?"} seats${c.direct ? " · nonstop" : ""}${c.airlines ? " · " + esc(c.airlines) : ""}${routing}">
           <span class="d">${day}</span><span class="m">${k}${aff ? "✓" : ""}</span></div>`;
       } else {
         html += `<div class="cell empty"><span class="d">${day}</span></div>`;
@@ -835,6 +855,69 @@ function renderGrid() {
     cur.setMonth(cur.getMonth() + 1);
   }
   $("gridMonths").innerHTML = html;
+  renderItineraries();
+}
+
+// --- Itinerary panel (needs trips.cache.json from `node detail.mjs`) ----------------
+const fmtClock = (stamp) => (stamp ? String(stamp).slice(11, 16) : "—");           // "2026-10-11T17:40" -> "17:40"
+const fmtDur = (min) => (min > 0 ? `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, "0")}m` : "—");
+const agoText = (iso) => {
+  const h = (Date.now() - Date.parse(iso || "")) / 3.6e6;
+  return !Number.isFinite(h) ? "" : h < 1 ? "just now" : h < 24 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`;
+};
+function renderItineraries() {
+  const box = $("gridItins");
+  if (!gridSel) { box.innerHTML = ""; return; }
+  const { o, d, date } = gridSel, X = $("gCabin").value;
+  const cmd = `node detail.mjs ${o}-${d}`;
+  const head = `<h4>${fmtDate(date)} · ${esc(o)}→${esc(d)} · ${cabinLabel(X)}</h4>`;
+  const hint = (t) => `${head}<p class="hint">${t}</p>`;
+  if (!TRIPS) {
+    box.innerHTML = hint(`Flight-level itineraries need the detail file: run <code>${cmd}</code>, then click <b>Open itineraries…</b> in the header.`);
+    return;
+  }
+  const detail = Explore.routeDetail(TRIPS, o, d);
+  if (!detail) {
+    box.innerHTML = hint(`Itineraries for ${esc(o)}→${esc(d)} haven't been pulled yet — run <code>${cmd}</code> (one API request), then <b>↻ Reload</b>.`);
+    return;
+  }
+  const its = Explore.tripsFor(TRIPS, o, d, date, X, settings);
+  const pulled = agoText(detail.pulledAt);
+  if (!its.length) {
+    const filt = settings.direct || settings.seats > 0 ? " Direct-only and Min-seats filters apply here too." : "";
+    box.innerHTML = hint(`No ${cabinLabel(X)} itineraries on ${fmtDate(date)} in the detail pulled ${pulled || "earlier"}.${filt}`);
+    return;
+  }
+  const anyLayovers = its.some((t) => Array.isArray(t.segments));
+  const shown = gridSelAll ? its : its.slice(0, 15);
+  let h = `${head}<div class="tablewrap"><table><thead><tr>
+    <th class="l">Flights</th><th class="l">Routing</th><th class="l">Aircraft</th><th>Departs</th><th>Arrives</th><th>Duration</th>
+    ${anyLayovers ? '<th class="l">Layovers</th>' : ""}<th>Seats</th><th>Points</th><th>Taxes</th></tr></thead><tbody>`;
+  for (const t of shown) {
+    const plus = t.arr ? Explore.daysBetween(t.dep.slice(0, 10), t.arr.slice(0, 10)) : 0;
+    const routing = t.stops === 0
+      ? '<span class="badge direct">nonstop</span>'
+      : `${esc(o)} → ${t.via.map(esc).join(" → ")} → ${esc(d)}`;
+    const lay = Explore.layoverMinutes(t);
+    const layTxt = lay == null ? '<span class="muted">—</span>' : lay.length ? lay.map((l) => `${esc(l.at)} ${fmtDur(l.minutes)}`).join(", ") : "";
+    h += `<tr>
+      <td class="l"><b>${t.flights.map(esc).join(", ") || "—"}</b>${t.carriers ? ` <span class="muted">${esc(t.carriers)}</span>` : ""}</td>
+      <td class="l">${routing}</td>
+      <td class="l">${t.aircraft.map(esc).join(" + ") || "—"}</td>
+      <td class="num">${fmtClock(t.dep)}</td>
+      <td class="num">${fmtClock(t.arr)}${plus > 0 ? ` <span class="muted">+${plus}</span>` : ""}</td>
+      <td class="num">${fmtDur(t.duration)}</td>
+      ${anyLayovers ? `<td class="l">${layTxt}</td>` : ""}
+      <td class="num">${t.seats || "?"}</td>
+      <td class="miles num">${fmt(t.miles)}</td>
+      <td class="num">${t.taxes ? "$" + (t.taxes / 100).toFixed(2) + (t.taxesCurrency ? " " + esc(t.taxesCurrency) : "") : "—"}</td></tr>`;
+  }
+  h += `</tbody></table></div><p class="hint foot">
+    <span>${its.length} ${cabinLabel(X)} itinerar${its.length === 1 ? "y" : "ies"} · times are local to each airport · pulled ${pulled || "earlier"}</span>
+    ${its.length > shown.length ? `<button id="itinsMore">Show all ${its.length}</button>` : ""}
+    ${!anyLayovers ? `<span>Exact layovers: <code>${cmd} --date ${date}</code></span>` : ""}</p>`;
+  box.innerHTML = h;
+  const more = $("itinsMore"); if (more) more.onclick = () => { gridSelAll = true; renderItineraries(); };
 }
 
 // === View 4: What can I book now? ==========================================
@@ -1083,6 +1166,12 @@ function switchTab(name) {
   $("gOrigin").addEventListener("change", () => { updateGridDestinations(); renderGrid(); });
   $("gDest").addEventListener("change", renderGrid);
   $("gCabin").addEventListener("change", renderGrid);
+  $("gridMonths").addEventListener("click", (e) => {
+    const cell = e.target.closest(".cell.has");
+    if (!cell) return;
+    gridSel = { o: $("gOrigin").value, d: $("gDest").value, date: cell.dataset.date }; gridSelAll = false;
+    renderGrid();
+  });
   $("sweetSort").addEventListener("change", () => { settings.sortSweet = $("sweetSort").value; saveSettings(); renderSweet(); });
   $("rtOrigin").addEventListener("change", () => { updateRTDests(); renderRT(); });
   $("rtDest").addEventListener("change", renderRT);
