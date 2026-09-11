@@ -24,7 +24,7 @@ Plan: `tasks/plan.md`. Read-only planning done 2026-09-11; no code changed yet.
 
 ## Phase 3: Polish
 - [x] **Task 6** Watchlist: `node detail.mjs …` command for starred routes + Copy button + ✓ age per detailed row — S
-- [ ] **Task 7** `make-sample.mjs` → `sample-trips.json`; README (setup step, Itinerary detail section, grid bullet, notes, dev commands) — M
+- [x] **Task 7** `make-sample.mjs` → `sample-trips.json`; README (setup step, Itinerary detail section, grid bullet, notes, dev commands) — M
 - [x] **Task 8** `--date` exact layovers via `/trips/{id}`, Layovers column — M
 - [ ] **Task 9 (optional)** "via MUC" routing badges in Sweet-spot / Discover for detailed routes — S
 
