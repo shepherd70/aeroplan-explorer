@@ -273,6 +273,12 @@ function normalize(raw) {
       // Total cash payable on this award (taxes + carrier surcharges), in the smallest
       // unit of taxesCurrency — i.e. cents. seats.aero reports this as an int; 0 = none.
       taxes: toInt(raw[`${X}TotalTaxes`]) || 0,
+      // The nonstop option's own numbers. `miles`/`seats`/`taxes`/`airlines` above describe
+      // the CHEAPEST itinerary, which may connect; when `direct` is true these say what the
+      // nonstop itself costs and offers (0 / "" when there is no nonstop).
+      directSeats: toInt(raw[`${X}DirectRemainingSeats`]) || 0,
+      directTaxes: toInt(raw[`${X}DirectTotalTaxes`]) || 0,
+      directAirlines: (raw[`${X}DirectAirlines`] || "").toString().trim(),
     };
   }
 
