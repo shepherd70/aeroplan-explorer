@@ -389,6 +389,7 @@ const WATCHES_KEY = "aeroplan-explorer-watches-v1";
 let settings = loadSettings();
 let fileHandle = null;
 let TRIPS = null;              // parsed trips.cache.json (itinerary detail from node detail.mjs), or null
+const TRIPS_SCHEMA = 1;        // the trips.cache.json schema this page understands (detail.mjs writes meta.schema)
 let gridSel = null;            // { o, d, date } — the date cell selected in the grid (itinerary panel)
 let gridSelAll = false;        // show every itinerary for the selected date, not just the first 15
 let tripsHandle = null;
@@ -503,6 +504,10 @@ function ingestTripsText(text) {
   try { parsed = JSON.parse(text); } catch { alert("That file isn't valid JSON."); return; }
   if (Array.isArray(parsed?.records)) { alert("That's the availability cache, not the itineraries file — pick trips.cache.json (written by node detail.mjs)."); return; }
   if (!parsed || typeof parsed.routes !== "object" || Array.isArray(parsed.routes)) { alert("Unexpected file format — expected { meta, routes } from node detail.mjs."); return; }
+  // A newer detail.mjs may write fields this page doesn't know; say so instead of rendering blanks.
+  const schema = parsed.meta?.schema;
+  if (Number.isFinite(schema) && schema > TRIPS_SCHEMA &&
+      !confirm(`This itineraries file uses schema ${schema}, but this page understands schema ${TRIPS_SCHEMA} — it was written by a newer detail.mjs. Some columns may come up blank. Load it anyway?`)) return;
   TRIPS = parsed;
   paintFreshness();
   if (DATA) renderAll();
