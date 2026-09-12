@@ -32,6 +32,16 @@ the committed samples). Human sign-off is still the open box.
 - [x] `CLAUDE.md` for future sessions
 - [x] Live cache re-pulled with `--returns` (391 calls, 255,621 records, 2026-09-12) — Round trips tab verified pairing YYZ⇄LHR
 
+## 2026-09-12 — itinerary detail on the Round trips tab (branch `rt-itineraries`)
+Plan (the last open question in `tasks/plan.md`): each round-trip leg is its own directional
+route, so both must be pulled; the panel reuses the grid's per-leg renderer.
+- [x] `Explore.detailStatus()` — one place that says no-file / not-pulled / outside-window / ok (tests)
+- [x] `legItinerariesHtml()` — the grid panel's table + empty states, shared; grid panel now a thin wrapper
+- [x] Round trips: rows clickable (mouse + Enter/Space) → `#rtItins` shows Outbound and Return legs; "via" badges per leg (exact date, no fallback); hint names whichever direction lacks detail
+- [x] `make-sample.mjs`: return legs for detailed destinations, on detailed dates only, so the sample's Round trips tab pairs and shows flights offline
+- [x] README (Itinerary detail "where it shows", Round trips view, samples note)
+- [x] Verified in headless Chrome on live YYZ⇄LHR detail (both directions) and on the regenerated samples (7 Business round trips, every return leg has flights)
+
 ## Follow-ups
 - [x] Keyboard access to grid date cells (`tabindex="0"` + Enter/Space on `#gridMonths`) — 2026-09-12
 - [x] `ingestTripsText`: confirm before loading a newer `meta.schema` — 2026-09-12
