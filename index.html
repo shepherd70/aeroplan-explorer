@@ -117,6 +117,7 @@
     font-size: 10px; background: var(--panel2); color: var(--muted); position: relative; }
   .cell.has { color: #04140a; font-weight: 600; cursor: pointer; }
   .cell.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .cell.has:focus-visible { outline: 2px dashed var(--accent); outline-offset: 1px; }
   .itins { margin: 6px 0 16px; }
   .itins h4 { margin: 0 0 6px; font-size: 13px; }
   .itins .tablewrap { max-height: 380px; }
@@ -388,6 +389,7 @@ const WATCHES_KEY = "aeroplan-explorer-watches-v1";
 let settings = loadSettings();
 let fileHandle = null;
 let TRIPS = null;              // parsed trips.cache.json (itinerary detail from node detail.mjs), or null
+const TRIPS_SCHEMA = 1;        // the trips.cache.json schema this page understands (detail.mjs writes meta.schema)
 let gridSel = null;            // { o, d, date } — the date cell selected in the grid (itinerary panel)
 let gridSelAll = false;        // show every itinerary for the selected date, not just the first 15
 let tripsHandle = null;
@@ -502,6 +504,10 @@ function ingestTripsText(text) {
   try { parsed = JSON.parse(text); } catch { alert("That file isn't valid JSON."); return; }
   if (Array.isArray(parsed?.records)) { alert("That's the availability cache, not the itineraries file — pick trips.cache.json (written by node detail.mjs)."); return; }
   if (!parsed || typeof parsed.routes !== "object" || Array.isArray(parsed.routes)) { alert("Unexpected file format — expected { meta, routes } from node detail.mjs."); return; }
+  // A newer detail.mjs may write fields this page doesn't know; say so instead of rendering blanks.
+  const schema = parsed.meta?.schema;
+  if (Number.isFinite(schema) && schema > TRIPS_SCHEMA &&
+      !confirm(`This itineraries file uses schema ${schema}, but this page understands schema ${TRIPS_SCHEMA} — it was written by a newer detail.mjs. Some columns may come up blank. Load it anyway?`)) return;
   TRIPS = parsed;
   paintFreshness();
   if (DATA) renderAll();
@@ -860,7 +866,7 @@ function renderGrid() {
           routing += " · click for itineraries";
         }
         const sel = gridSel && gridSel.date === ds ? " selected" : "";
-        html += `<div class="cell has${sel}" data-date="${ds}" style="background:${colorFor(t)}" title="${ds}: ${fmt(c.miles)} pts${c.taxes != null ? " + $" + fmt(c.taxes / 100) + (c._cur ? " " + esc(c._cur) : "") + " taxes" : ""} · ${c.seats || "?"} seats${c.direct ? " · nonstop" : ""}${c.airlines ? " · " + esc(c.airlines) : ""}${routing}">
+        html += `<div class="cell has${sel}" data-date="${ds}" tabindex="0" role="button" style="background:${colorFor(t)}" title="${ds}: ${fmt(c.miles)} pts${c.taxes != null ? " + $" + fmt(c.taxes / 100) + (c._cur ? " " + esc(c._cur) : "") + " taxes" : ""} · ${c.seats || "?"} seats${c.direct ? " · nonstop" : ""}${c.airlines ? " · " + esc(c.airlines) : ""}${routing}">
           <span class="d">${day}</span><span class="m">${k}${aff ? "✓" : ""}</span></div>`;
       } else {
         html += `<div class="cell empty"><span class="d">${day}</span></div>`;
@@ -1199,11 +1205,20 @@ function switchTab(name) {
   $("gOrigin").addEventListener("change", () => { updateGridDestinations(); renderGrid(); });
   $("gDest").addEventListener("change", renderGrid);
   $("gCabin").addEventListener("change", renderGrid);
-  $("gridMonths").addEventListener("click", (e) => {
-    const cell = e.target.closest(".cell.has");
-    if (!cell) return;
+  // Pick a date cell (mouse or keyboard) and open its itinerary panel. Re-rendering replaces the
+  // cells, so a keyboard pick re-focuses the new selected cell to keep the Tab position.
+  const selectGridDate = (cell, viaKeyboard) => {
     gridSel = { o: $("gOrigin").value, d: $("gDest").value, date: cell.dataset.date }; gridSelAll = false;
     renderGrid();
+    if (viaKeyboard) $("gridMonths").querySelector(".cell.selected")?.focus();
+  };
+  $("gridMonths").addEventListener("click", (e) => { const cell = e.target.closest(".cell.has"); if (cell) selectGridDate(cell, false); });
+  $("gridMonths").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const cell = e.target.closest(".cell.has");
+    if (!cell) return;
+    e.preventDefault(); // Space would otherwise scroll the page
+    selectGridDate(cell, true);
   });
   $("sweetSort").addEventListener("change", () => { settings.sortSweet = $("sweetSort").value; saveSettings(); renderSweet(); });
   $("rtOrigin").addEventListener("change", () => { updateRTDests(); renderRT(); });
