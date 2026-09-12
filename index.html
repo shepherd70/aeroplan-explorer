@@ -886,38 +886,30 @@ const agoText = (iso) => {
   const h = (Date.now() - Date.parse(iso || "")) / 3.6e6;
   return !Number.isFinite(h) ? "" : h < 1 ? "just now" : h < 24 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`;
 };
-function renderItineraries() {
-  const box = $("gridItins");
-  if (!gridSel) { box.innerHTML = ""; return; }
-  const { o, d, date } = gridSel, X = $("gCabin").value;
-  const cmd = `node detail.mjs ${o}-${d}`;
-  const head = `<h4>${fmtDate(date)} · ${esc(o)}→${esc(d)} · ${cabinLabel(X)}</h4>`;
+// One leg's itineraries for a date + cabin — or one sentence on why there are none — as HTML.
+// Shared by the date grid's panel and the Round-trips panel. `cmd` is the detail command the
+// caller wants suggested (it knows which routes are missing); `moreId` names the "Show all"
+// button so the caller can wire it (empty = no button).
+function legItinerariesHtml(o, d, date, X, { title, cmd, showAll = false, moreId = "" }) {
+  const head = `<h4>${title}</h4>`;
   const hint = (t) => `${head}<p class="hint">${t}</p>`;
-  if (!TRIPS) {
-    box.innerHTML = hint(`Flight-level itineraries need the detail file: run <code>${cmd}</code>, then click <b>Open itineraries…</b> in the header.`);
-    return;
-  }
-  const detail = Explore.routeDetail(TRIPS, o, d);
-  if (!detail) {
-    box.innerHTML = hint(`Itineraries for ${esc(o)}→${esc(d)} haven't been pulled yet — run <code>${cmd}</code> (one API request), then <b>↻ Reload</b>.`);
-    return;
+  const route = `${esc(o)}→${esc(d)}`;
+  const { status, detail } = Explore.detailStatus(TRIPS, o, d, date);
+  if (status === "no-file") return hint(`Flight-level itineraries need the detail file: run <code>${cmd}</code>, then click <b>Open itineraries…</b> in the header.`);
+  if (status === "not-pulled") return hint(`Itineraries for ${route} haven't been pulled yet — run <code>${cmd}</code> (one API request per route), then <b>↻ Reload</b>.`);
+  if (status === "outside-window") {
+    // e.g. the main cache was re-pulled later and its window moved past the detail's.
+    const w = detail.dateWindow;
+    return hint(`The itineraries pulled for ${route} cover ${fmtDate(w.start)} – ${fmtDate(w.end)}, not ${fmtDate(date)} — re-run <code>${cmd}</code> to extend them, then <b>↻ Reload</b>.`);
   }
   const its = Explore.tripsFor(TRIPS, o, d, date, X, settings);
   const pulled = agoText(detail.pulledAt);
   if (!its.length) {
-    // The grid may show dates the detail pull never covered (e.g. the main cache was re-pulled
-    // later and its window moved); say so instead of implying the day has no flights.
-    const win = detail.dateWindow;
-    if (win && (date < win.start || date > win.end)) {
-      box.innerHTML = hint(`The itineraries pulled for ${esc(o)}→${esc(d)} cover ${fmtDate(win.start)} – ${fmtDate(win.end)}, not ${fmtDate(date)} — re-run <code>${cmd}</code> to extend them, then <b>↻ Reload</b>.`);
-      return;
-    }
     const filt = settings.direct || settings.seats > 0 ? " Direct-only and Min-seats filters apply here too." : "";
-    box.innerHTML = hint(`No ${cabinLabel(X)} itineraries on ${fmtDate(date)} in the detail pulled ${pulled || "earlier"}.${filt}`);
-    return;
+    return hint(`No ${cabinLabel(X)} itineraries on ${fmtDate(date)} in the detail pulled ${pulled || "earlier"}.${filt}`);
   }
   const anyLayovers = its.some((t) => Array.isArray(t.segments));
-  const shown = gridSelAll ? its : its.slice(0, 15);
+  const shown = showAll ? its : its.slice(0, 15);
   let h = `${head}<div class="tablewrap"><table><thead><tr>
     <th class="l">Flights</th><th class="l">Routing</th><th class="l">Aircraft</th><th>Departs</th><th>Arrives</th><th>Duration</th>
     ${anyLayovers ? '<th class="l">Layovers</th>' : ""}<th>Seats</th><th>Points</th><th>Taxes</th></tr></thead><tbody>`;
@@ -942,9 +934,16 @@ function renderItineraries() {
   }
   h += `</tbody></table></div><p class="hint foot">
     <span>${its.length} ${cabinLabel(X)} itinerar${its.length === 1 ? "y" : "ies"} · times are local to each airport · pulled ${pulled || "earlier"}</span>
-    ${its.length > shown.length ? `<button id="itinsMore">Show all ${its.length}</button>` : ""}
-    ${!anyLayovers ? `<span>Exact layovers: <code>${cmd} --date ${date}</code></span>` : ""}</p>`;
-  box.innerHTML = h;
+    ${its.length > shown.length && moreId ? `<button id="${moreId}">Show all ${its.length}</button>` : ""}
+    ${!anyLayovers ? `<span>Exact layovers: <code>node detail.mjs ${esc(o)}-${esc(d)} --date ${date}</code></span>` : ""}</p>`;
+  return h;
+}
+function renderItineraries() {
+  const box = $("gridItins");
+  if (!gridSel) { box.innerHTML = ""; return; }
+  const { o, d, date } = gridSel, X = $("gCabin").value;
+  box.innerHTML = legItinerariesHtml(o, d, date, X, {
+    title: `${fmtDate(date)} · ${esc(o)}→${esc(d)} · ${cabinLabel(X)}`, cmd: `node detail.mjs ${o}-${d}`, showAll: gridSelAll, moreId: "itinsMore" });
   const more = $("itinsMore"); if (more) more.onclick = () => { gridSelAll = true; renderItineraries(); };
 }
 
