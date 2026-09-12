@@ -33,5 +33,5 @@ the committed samples). Human sign-off is still the open box.
 - [x] Live cache re-pulled with `--returns` (391 calls, 255,621 records, 2026-09-12) — Round trips tab verified pairing YYZ⇄LHR
 
 ## Follow-ups
-- [ ] Keyboard access to grid date cells (`tabindex="0"` + Enter/Space on `#gridMonths`)
-- [ ] `ingestTripsText`: warn on an unknown/newer `meta.schema`
+- [x] Keyboard access to grid date cells (`tabindex="0"` + Enter/Space on `#gridMonths`) — 2026-09-12
+- [x] `ingestTripsText`: confirm before loading a newer `meta.schema` — 2026-09-12
