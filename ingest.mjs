@@ -5,6 +5,7 @@
 //
 // Run:   node ingest.mjs            (outbound legs from your origin regions)
 //        node ingest.mjs --returns  (also the return legs, so the Round-trips view can pair them)
+//        node ingest.mjs --quiet    (no per-page progress or record-shape dump — for scheduled runs)
 // Needs: a seats.aero Pro API key in env var SEATS_AERO_KEY (or a local .env file).
 //
 // Zero dependencies — uses Node 18+ native fetch. (Tested on Node v24.)
@@ -47,6 +48,7 @@ const CONFIG = {
   quotaFloor: 25,               // stop early if remaining daily calls drops below this
   onlyKeepAvailable: true,       // drop records with no available cabin
   trackHistory: true,            // carry forward a compact per-route price/availability history
+  quiet: false,                  // --quiet: header, one line per pass and the summary only (log-friendly)
   outFile: join(__dirname, "aeroplan-cache.json"),
 };
 
@@ -66,11 +68,12 @@ function isMain(metaUrl) {
   return !!process.argv[1] && metaUrl === pathToFileURL(process.argv[1]).href;
 }
 
-// CLI flags override CONFIG for one run. Only `--returns` so far; anything else is a typo.
+// CLI flags override CONFIG for one run; anything else is a typo.
 function applyCliFlags(argv) {
   for (const a of argv) {
     if (a === "--returns") CONFIG.pullReturns = true;
-    else { console.error(`❌ Unknown option ${a}\nusage: node ingest.mjs [--returns]`); process.exit(1); }
+    else if (a === "--quiet") CONFIG.quiet = true;
+    else { console.error(`❌ Unknown option ${a}\nusage: node ingest.mjs [--returns] [--quiet]`); process.exit(1); }
   }
 }
 
@@ -86,6 +89,7 @@ async function main() {
   }
 
   console.log(`Aeroplan Award Explorer — ingest`);
+  console.log(`  run    : ${new Date().toISOString()}`);
   console.log(`  source : ${CONFIG.source}`);
   console.log(`  dates  : ${CONFIG.startDate} → ${CONFIG.endDate}`);
   console.log(
@@ -124,7 +128,7 @@ async function main() {
         break;
       }
       const label = `${pass.o || "ALL"}→${pass.d || "ALL"}`;
-      let skip = 0;
+      let skip = 0, pages = 0;
       let snapshot = null; // seats.aero "cursor": a constant snapshot token, not an advancing pointer
       for (let page = 0; page < CONFIG.maxPagesPerRegion; page++) {
         const params = new URLSearchParams({
@@ -168,9 +172,10 @@ async function main() {
 
         const json = await res.json();
         const items = Array.isArray(json) ? json : json.data || json.results || [];
+        pages++;
 
         // One-time diagnostic: print the real shape so you can confirm field names.
-        if (!shapeLogged && items.length) {
+        if (!CONFIG.quiet && !shapeLogged && items.length) {
           shapeLogged = true;
           console.log("First record keys:", Object.keys(items[0]).join(", "));
           if (items[0].Route) console.log("Route keys:", Object.keys(items[0].Route).join(", "));
@@ -184,7 +189,7 @@ async function main() {
           byId.set(rec.id || `${rec.origin}-${rec.destination}-${rec.date}`, rec);
         }
 
-        process.stdout.write(
+        if (!CONFIG.quiet) process.stdout.write(
           `\r  ${label}: page ${page + 1}, ${byId.size} unique records` +
             (quotaRemaining != null ? `, ~${quotaRemaining} calls left` : "")
         );
@@ -205,7 +210,9 @@ async function main() {
         }
         await sleep(CONFIG.pauseMs);
       }
-      process.stdout.write("\n");
+      // Progress was drawn in place; quiet mode gets one line per pass instead.
+      if (CONFIG.quiet) console.log(`  ${label}: ${pages} page${pages === 1 ? "" : "s"}, ${byId.size} unique records so far` + (quotaRemaining != null ? `, ~${quotaRemaining} calls left` : ""));
+      else process.stdout.write("\n");
     }
   } finally {
     // Always persist whatever we collected — a mid-run failure shouldn't waste the
