@@ -42,6 +42,13 @@ route, so both must be pulled; the panel reuses the grid's per-leg renderer.
 - [x] README (Itinerary detail "where it shows", Round trips view, samples note)
 - [x] Verified in headless Chrome on live YYZ⇄LHR detail (both directions) and on the regenerated samples (7 Business round trips, every return leg has flights)
 
+## 2026-09-12 — scheduled refresh (branch `scheduled-refresh`)
+Trend, Watchlist status and the freshness pill compare pulls, so they need a daily run.
+- [x] `node ingest.mjs --quiet`: header (with run time) + one line per pass + summary; no progress or shape dump
+- [x] `refresh.sh`: scheduler entry point — cd to the repo, nvm-aware, appends to gitignored `ingest.log`, passes flags through
+- [x] README "Keeping it fresh": Task Scheduler (WSL) and cron examples; detail pulls stay manual on purpose
+- [x] Verified: quiet vs normal output against a fake API; wrapper invoked through wsl.exe as a task would (Node found, log written, exit code propagated)
+
 ## Follow-ups
 - [x] Keyboard access to grid date cells (`tabindex="0"` + Enter/Space on `#gridMonths`) — 2026-09-12
 - [x] `ingestTripsText`: confirm before loading a newer `meta.schema` — 2026-09-12
