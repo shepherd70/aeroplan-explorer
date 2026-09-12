@@ -3,7 +3,8 @@
 // Pulls Aeroplan award availability from the seats.aero Partner API and writes a
 // normalized local cache file (aeroplan-cache.json) that the explorer reads offline.
 //
-// Run:   node ingest.mjs
+// Run:   node ingest.mjs            (outbound legs from your origin regions)
+//        node ingest.mjs --returns  (also the return legs, so the Round-trips view can pair them)
 // Needs: a seats.aero Pro API key in env var SEATS_AERO_KEY (or a local .env file).
 //
 // Zero dependencies — uses Node 18+ native fetch. (Tested on Node v24.)
@@ -35,7 +36,8 @@ const CONFIG = {
   destinationRegion: null,
 
   // Pull RETURN legs too (dest→home), so the Round-trips view can pair outbound+return.
-  // Adds a reverse pass per origin region — roughly doubles quota. Off by default.
+  // Adds a reverse pass per origin region — roughly doubles quota. Off by default;
+  // `node ingest.mjs --returns` turns it on for one run without editing this file.
   pullReturns: false,
 
   take: 1000,                    // page size (10–1000). Bigger = fewer calls.
@@ -64,7 +66,16 @@ function isMain(metaUrl) {
   return !!process.argv[1] && metaUrl === pathToFileURL(process.argv[1]).href;
 }
 
+// CLI flags override CONFIG for one run. Only `--returns` so far; anything else is a typo.
+function applyCliFlags(argv) {
+  for (const a of argv) {
+    if (a === "--returns") CONFIG.pullReturns = true;
+    else { console.error(`❌ Unknown option ${a}\nusage: node ingest.mjs [--returns]`); process.exit(1); }
+  }
+}
+
 async function main() {
+  applyCliFlags(process.argv.slice(2));
   const apiKey = loadApiKey();
   if (!apiKey) {
     console.error(
@@ -80,6 +91,7 @@ async function main() {
   console.log(
     `  origins: ${CONFIG.originRegions.length ? CONFIG.originRegions.join(", ") : "ALL regions"}`
   );
+  console.log(`  returns: ${CONFIG.pullReturns ? "yes — return legs (dest→home) too" : "no — outbound only (add --returns for round trips)"}`);
   console.log("");
 
   // Each pass is an {o: originRegion, d: destinationRegion} filter (null = unfiltered).
