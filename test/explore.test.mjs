@@ -365,6 +365,19 @@ test("routeDetail reports pull age, coverage and window, or null when the route 
   assert.equal(routeDetail(null, "YYZ", "LHR"), null);
 });
 
+test("detailStatus says why a leg has nothing before the day is even looked at", () => {
+  const { detailStatus } = Explore;
+  assert.equal(detailStatus(null, "YYZ", "LHR", "2026-10-11").status, "no-file");
+  assert.equal(detailStatus(TRIPS, "YVR", "NRT", "2026-10-11").status, "not-pulled");
+  const windowed = { routes: { "YYZ-LHR": { ...TRIPS.routes["YYZ-LHR"], dateWindow: { start: "2026-09-11", end: "2026-12-10" } } } };
+  assert.equal(detailStatus(windowed, "YYZ", "LHR", "2026-12-11").status, "outside-window");
+  assert.equal(detailStatus(windowed, "YYZ", "LHR", "2026-09-10").status, "outside-window");
+  assert.equal(detailStatus(windowed, "YYZ", "LHR", "2026-12-10").status, "ok");
+  assert.equal(detailStatus(windowed, "YYZ", "LHR", "2026-10-11").detail.dateCount, 2);
+  // No window recorded (older file): can't tell "outside" from "none", so look at the day.
+  assert.equal(detailStatus(TRIPS, "YYZ", "LHR", "2026-12-11").status, "ok");
+});
+
 test("layoverMinutes derives connection waits from segments, null without them", () => {
   const { layoverMinutes } = Explore;
   const withSegs = trip({ segments: [
