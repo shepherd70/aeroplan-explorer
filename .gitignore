@@ -13,3 +13,6 @@ aeroplan-cache.json
 .DS_Store
 Thumbs.db
 node_modules/
+
+# Scheduled-refresh output (see README → "Keeping it fresh")
+*.log

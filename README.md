@@ -41,6 +41,7 @@ fix the script.
    you can confirm field names. By default it pulls **North America–origin** Aeroplan
    availability for the **next 90 days**. Add `--returns` to also pull the return legs
    (destination→home) so the **Round trips** tab can pair them — roughly twice the API calls.
+   To run it every morning, see **Keeping it fresh** below.
 
 4. **Explore.** Open `index.html` in Chrome or Edge, click **“Open cache file…”**, and
    pick `aeroplan-cache.json` (or the bundled `sample-cache.json` to look around before you
@@ -132,6 +133,48 @@ seats.aero uses a **daily usage quota** (not per-second). The ingester reads the
 remaining-calls header, prints it as it goes, and stops before draining it.
 
 **Valid regions:** `North America`, `South America`, `Africa`, `Asia`, `Europe`, `Oceania`.
+
+---
+
+## Keeping it fresh (scheduled pulls)
+
+The **Trend** column, the Watchlist's *since your last pull* status and the header's freshness
+pill all compare pulls, so they only earn their keep once `node ingest.mjs` runs regularly —
+ideally once a day with the same `CONFIG`, which keeps each route's history series comparable
+(one point per run; drops and rises need at least two). A pull is ~200 API calls, ~400 with
+`--returns`, out of the daily 1000.
+
+`--quiet` makes the ingester log-friendly: no per-page progress or record-shape dump, just the
+config header, one line per pass and the summary. `refresh.sh` wraps that for a scheduler: it
+`cd`s into the repo, picks up an nvm-installed Node if that's how you installed it, and appends
+everything to `ingest.log` (gitignored). Extra arguments go straight through to `ingest.mjs`:
+
+```
+bash /path/to/aeroplan-explorer/refresh.sh --returns
+```
+
+**Windows with the repo under WSL** (how this project is developed). In PowerShell, create a
+daily task — the wrapper handles the shell side, so nothing needs quoting (`wsl -l` lists your
+distro name):
+
+```
+schtasks /Create /TN "Aeroplan ingest" /SC DAILY /ST 06:30 /TR "wsl.exe -d Ubuntu -- bash /home/YOU/dev/aeroplan-explorer/refresh.sh --returns"
+```
+
+Run it once by hand with `schtasks /Run /TN "Aeroplan ingest"`, then check `ingest.log` in the
+repo; remove it with `schtasks /Delete /TN "Aeroplan ingest"`. A daily task only fires while the
+PC is on — in Task Scheduler's properties, *Run task as soon as possible after a scheduled start
+is missed* covers mornings it was asleep.
+
+**Linux / macOS** — `crontab -e`:
+
+```
+30 6 * * * bash /path/to/aeroplan-explorer/refresh.sh --returns
+```
+
+After a scheduled pull, hit **↻ Reload** in the explorer. Itinerary detail (`node detail.mjs`)
+is deliberately not scheduled: it costs one request per route, and only you know which routes
+matter — the Watchlist hands you the command whenever you want it.
 
 ---
 
