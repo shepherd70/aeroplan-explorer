@@ -150,7 +150,8 @@ remaining-calls header, prints it as it goes, and stops before draining it.
    since your last pull.
 3. **Flexible date grid** — pick a route, see a month-by-month calendar heatmap of points
    cost and seats. The fix for "I don't have fixed dates." With itinerary detail loaded,
-   click a date to see every flight option that day (see **Itinerary detail** above).
+   click a date (or Tab to it and press Enter) to see every flight option that day (see
+   **Itinerary detail** above).
 4. **What can I book now?** — enter your balance; see destinations reachable **one-way**
    per cabin and a list of everything you can afford today, each with its **Taxes** (the cash
    you still pay on top — points can't cover it). Points are one-way; a round trip needs
