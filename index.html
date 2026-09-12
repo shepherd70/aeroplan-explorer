@@ -899,6 +899,13 @@ function renderItineraries() {
   const its = Explore.tripsFor(TRIPS, o, d, date, X, settings);
   const pulled = agoText(detail.pulledAt);
   if (!its.length) {
+    // The grid may show dates the detail pull never covered (e.g. the main cache was re-pulled
+    // later and its window moved); say so instead of implying the day has no flights.
+    const win = detail.dateWindow;
+    if (win && (date < win.start || date > win.end)) {
+      box.innerHTML = hint(`The itineraries pulled for ${esc(o)}→${esc(d)} cover ${fmtDate(win.start)} – ${fmtDate(win.end)}, not ${fmtDate(date)} — re-run <code>${cmd}</code> to extend them, then <b>↻ Reload</b>.`);
+      return;
+    }
     const filt = settings.direct || settings.seats > 0 ? " Direct-only and Min-seats filters apply here too." : "";
     box.innerHTML = hint(`No ${cabinLabel(X)} itineraries on ${fmtDate(date)} in the detail pulled ${pulled || "earlier"}.${filt}`);
     return;

@@ -355,9 +355,12 @@ test("tripsFor returns a date+cabin's itineraries cheapest-then-shortest, honori
   assert.deepEqual(tripsFor(null, "YYZ", "LHR", "2026-10-11", "J", S()), []);
 });
 
-test("routeDetail reports pull age and coverage, or null when the route was never pulled", () => {
+test("routeDetail reports pull age, coverage and window, or null when the route was never pulled", () => {
   const { routeDetail } = Explore;
-  assert.deepEqual(routeDetail(TRIPS, "YYZ", "LHR"), { pulledAt: "2026-09-11T12:00:00Z", dateCount: 2, tripCount: 5 });
+  assert.deepEqual(routeDetail(TRIPS, "YYZ", "LHR"), { pulledAt: "2026-09-11T12:00:00Z", dateCount: 2, tripCount: 5, dateWindow: null });
+  // The window the route was pulled for rides along, so the UI can tell "outside the window" from "no itineraries".
+  const windowed = { routes: { "YYZ-LHR": { ...TRIPS.routes["YYZ-LHR"], dateWindow: { start: "2026-09-11", end: "2026-12-10" } } } };
+  assert.deepEqual(routeDetail(windowed, "YYZ", "LHR").dateWindow, { start: "2026-09-11", end: "2026-12-10" });
   assert.equal(routeDetail(TRIPS, "YVR", "NRT"), null);
   assert.equal(routeDetail(null, "YYZ", "LHR"), null);
 });
