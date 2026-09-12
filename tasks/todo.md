@@ -30,7 +30,7 @@ the committed samples). Human sign-off is still the open box.
       (README setup step + config table + notes, Round-trips empty state name the flag)
 - [x] Panel: outside-window empty state (`lib/explore.js`, `index.html`, test)
 - [x] `CLAUDE.md` for future sessions
-- [ ] Live cache re-pulled with `--returns` so the Round trips tab has data (in progress)
+- [x] Live cache re-pulled with `--returns` (391 calls, 255,621 records, 2026-09-12) — Round trips tab verified pairing YYZ⇄LHR
 
 ## Follow-ups
 - [ ] Keyboard access to grid date cells (`tabindex="0"` + Enter/Space on `#gridMonths`)
