@@ -8,7 +8,9 @@
 //
 // If trips.cache.json exists (from `node detail.mjs`), it also writes a trimmed
 // sample-trips.json for the routes the sample covers, so the date grid's
-// itinerary panel has something to show offline too.
+// itinerary panel has something to show offline too. Destinations with detail
+// also keep their return legs (dest→home) — only on dates that have detail —
+// so the Round trips tab and its per-leg itineraries work offline as well.
 //
 // Run (after an ingest):   node make-sample.mjs
 //
@@ -42,18 +44,24 @@ const all = cache.records || [];
 if (!all.length) { console.error("❌ Cache has no records."); process.exit(1); }
 
 const keepOrigin = new Set(CONFIG.origins);
-let recs = all.filter((r) => keepOrigin.has(r.origin));
+const trips = existsSync(CONFIG.tripsIn) ? JSON.parse(readFileSync(CONFIG.tripsIn, "utf8")) : null;
+// The far end of a record: its destination on an outbound leg, its origin on a return leg.
+const far = (r) => (keepOrigin.has(r.origin) ? r.destination : r.origin);
+// Return legs are kept only for destinations that have itinerary detail in either direction
+// (see the header comment); everything else is outbound-only, as before.
+const returnDests = new Set();
+for (const key of Object.keys(trips?.routes || {})) {
+  const [a, b] = key.split("-");
+  if (keepOrigin.has(a)) returnDests.add(b);
+  if (keepOrigin.has(b)) returnDests.add(a);
+}
+let recs = all.filter((r) => keepOrigin.has(r.origin) || (keepOrigin.has(r.destination) && returnDests.has(r.origin)));
 
 // Destinations with itinerary detail come first (so sample-trips.json lines up with the
 // sample), then the best-covered ones; take as many as fit the byte budget.
 const freq = {};
-for (const r of recs) freq[r.destination] = (freq[r.destination] || 0) + 1;
-const trips = existsSync(CONFIG.tripsIn) ? JSON.parse(readFileSync(CONFIG.tripsIn, "utf8")) : null;
-const detailDests = new Set();
-for (const key of Object.keys(trips?.routes || {})) {
-  const [o, d] = key.split("-");
-  if (keepOrigin.has(o) && freq[d]) detailDests.add(d);
-}
+for (const r of recs) freq[far(r)] = (freq[far(r)] || 0) + 1;
+const detailDests = new Set([...returnDests].filter((d) => freq[d]));
 const ordered = [
   ...detailDests,
   ...Object.entries(freq).sort((a, b) => b[1] - a[1]).map(([d]) => d).filter((d) => !detailDests.has(d)),
@@ -62,30 +70,16 @@ const keepDest = new Set();
 let bytes = 0;
 for (const d of ordered) {
   if (keepDest.size >= CONFIG.maxDestinations) break;
-  const chunk = JSON.stringify(recs.filter((r) => r.destination === d)).length;
+  const chunk = JSON.stringify(recs.filter((r) => far(r) === d)).length;
   if (bytes + chunk > CONFIG.maxBytes) continue; // skip; a smaller destination may still fit
   keepDest.add(d); bytes += chunk;
 }
-recs = recs.filter((r) => keepDest.has(r.destination));
-
-const out = {
-  meta: {
-    ...cache.meta,
-    recordCount: recs.length,
-    sample: true,
-    sampleNote: `Trimmed preview (${CONFIG.origins.join(", ")} · ${keepDest.size} destinations). Run "node ingest.mjs" for live data.`,
-  },
-  records: recs,
-};
-
-const json = JSON.stringify(out);
-writeFileSync(CONFIG.outFile, json);
-console.log(
-  `✅ Wrote ${recs.length} records (${keepDest.size} destinations, origins ${CONFIG.origins.join(", ")}) ` +
-    `to ${CONFIG.outFile} — ${(Buffer.byteLength(json) / 1024).toFixed(0)} KB`
-);
+recs = recs.filter((r) => keepDest.has(far(r)));
 
 // --- itineraries sample (optional) ------------------------------------------
+// Built before the cache sample is written: return legs are then trimmed to the dates that
+// have detail, so every round trip the sample can pair also has flights to show.
+const detailedDates = {}; // "ORIG-DEST" -> Set of dates kept in sample-trips.json
 if (!existsSync(CONFIG.tripsIn)) {
   console.log(`   (no ${CONFIG.tripsIn} — run "node detail.mjs ORIG-DEST" to also ship a sample-trips.json)`);
 } else {
@@ -109,6 +103,7 @@ if (!existsSync(CONFIG.tripsIn)) {
       }
     }
     routes[key] = { ...entry, dates };
+    detailedDates[key] = new Set(Object.keys(dates));
   }
   const n = Object.keys(routes).length;
   if (!n) {
@@ -120,3 +115,25 @@ if (!existsSync(CONFIG.tripsIn)) {
     console.log(`✅ Wrote ${n} route(s) of itineraries to ${CONFIG.tripsOut} — ${(Buffer.byteLength(tjson) / 1024).toFixed(0)} KB`);
   }
 }
+
+// Return legs only on dates with detail (outbound legs keep every date, as before).
+recs = recs.filter((r) => keepOrigin.has(r.origin) || detailedDates[`${r.origin}-${r.destination}`]?.has(r.date));
+const returnsKept = [...returnDests].filter((d) => keepDest.has(d));
+
+const out = {
+  meta: {
+    ...cache.meta,
+    recordCount: recs.length,
+    sample: true,
+    sampleNote: `Trimmed preview (${CONFIG.origins.join(", ")} · ${keepDest.size} destinations` +
+      `${returnsKept.length ? "; return legs for " + returnsKept.join(", ") : ""}). Run "node ingest.mjs" for live data.`,
+  },
+  records: recs,
+};
+
+const json = JSON.stringify(out);
+writeFileSync(CONFIG.outFile, json);
+console.log(
+  `✅ Wrote ${recs.length} records (${keepDest.size} destinations, origins ${CONFIG.origins.join(", ")}` +
+    `${returnsKept.length ? ", returns for " + returnsKept.join(", ") : ""}) to ${CONFIG.outFile} — ${(Buffer.byteLength(json) / 1024).toFixed(0)} KB`
+);
