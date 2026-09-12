@@ -57,7 +57,8 @@ fix the script.
    [Itinerary detail](#itinerary-detail-flights-connections-aircraft-layovers) below.
 
 > Small samples ship with the repo — `sample-cache.json` and `sample-trips.json` — so you
-> can click around before you run anything. `node ingest.mjs` / `node detail.mjs` write the
+> can click around before you run anything (they include return legs and itineraries for
+> YYZ⇄LHR, so the **Round trips** tab works offline too). `node ingest.mjs` / `node detail.mjs` write the
 > **live** `aeroplan-cache.json` / `trips.cache.json` (both gitignored); open those once you
 > have them. (Regenerate the samples with `node make-sample.mjs`.)
 
@@ -95,7 +96,9 @@ arrival times, total duration, seats, points and taxes per itinerary.
 - **Where it shows.** In the **Flexible date grid**, click a date cell: a panel lists that
   day's itineraries for the selected cabin, cheapest first then shortest. The **Direct only**
   and **Min seats** filters apply there too. Cell tooltips say how the cheapest one routes
-  ("via MUC"). Routes you haven't pulled show the exact command to run.
+  ("via MUC"). Routes you haven't pulled show the exact command to run. In **Round trips**,
+  click a row to see both legs' flights — the return is its own route, so pull both directions
+  (`node detail.mjs YYZ-LHR LHR-YYZ`; the tab tells you which one is missing).
 - **Exact layovers.** The per-route pull gives total journey time and the connection
   airports, but not per-segment times. For one date, `node detail.mjs YYZ-LHR --date
   2026-10-11` fetches segment-level detail (one request per route + date) and the panel gains
@@ -159,7 +162,9 @@ remaining-calls header, prints it as it goes, and stops before draining it.
 5. **Round trips** — pair a real outbound (home→dest) award with the cheapest-points return
    (dest→home) within a trip-length window you set (min/max nights), showing combined points,
    combined taxes, and tax-honest round-trip ¢/pt — not the ≈2× estimate. Needs return-leg data
-   in the cache (`pullReturns` above); if it's missing, the tab tells you how to pull it.
+   in the cache (`pullReturns` above); if it's missing, the tab tells you how to pull it. With
+   itinerary detail for both directions, each leg shows how its cheapest itinerary routes and
+   clicking a row lists both legs' flights (see **Itinerary detail** above).
 6. **Watchlist** — star any route in the Sweet-spot finder and it lands here with its current
    cheapest points, how many dates are available, an optional points **target**, a status
    (available / under target / over), and its trend since your last pull. Stars and targets are saved in your browser; the list is
