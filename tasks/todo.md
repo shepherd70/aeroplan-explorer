@@ -1,37 +1,37 @@
-# TODO — On-demand flight itinerary detail
+# TODO — Aeroplan Award Explorer
 
-Plan: `tasks/plan.md`. Read-only planning done 2026-09-11; no code changed yet.
+Feature tracker. The plan for the itinerary-detail work (tasks, acceptance criteria, real API
+shapes) is in `tasks/plan.md`.
 
-## Phase 1: Foundation
-- [x] **Task 1** `normalizeTrip()` + schema in `detail.mjs` (isMain-guarded), fixtures + tests in `test/detail.test.mjs` — S
-- [x] **Task 2** `node detail.mjs ORIG-DEST …` CLI: per-route search with `include_trips=true&sources=aeroplan`, skip-pagination, merge-by-route into `trips.cache.json`, quota floor, retries; export `loadApiKey/readRemainingQuota/sleep` from `ingest.mjs` — M
-- [x] **Task 3** `lib/explore.js`: `tripsFor`, `layoverMinutes`, `routeDetail` + tests — S
-- [x] **Task 4** `index.html`: Open itineraries… button, `tripsHandle` in IndexedDB, `ingestTripsText`, Reload/restore both files, pill suffix — S
+## Shipped
+- [x] On-demand itinerary detail, plan Tasks 1–9 (detail.mjs, trips.cache.json, grid panel,
+      Watchlist command, samples, `--date` layovers, "via" badges) — PR #2 `itinerary-detail`, merged 2026-09-11
+- [x] Follow-up: `ingest.mjs normalize()` captures `XDirectRemainingSeats / XDirectTotalTaxes /
+      XDirectAirlines` (no extra requests) — PR #3 `direct-fields`, merged 2026-09-11
+- [x] Every view describes the nonstop under Direct only (`Explore.directView`) — PR #4
+      `direct-only-views`, merged 2026-09-11
 
-### Checkpoint A
-- [x] `node --test` green
-- [x] `node detail.mjs YYZ-LHR` → file loads in page, pill shows "1 route detailed"
-- [x] No UI change without a trips file
-- [ ] Schema reviewed by human (pending — built autonomously)
+## Review checkpoints left open by the plan
+Both were built autonomously; a Claude review pass ran on 2026-09-12 (headless Chrome against
+the committed samples). Human sign-off is still the open box.
+- [ ] **Schema reviewed by human.** Review notes: schema is sound (cents + currency match the
+      main cache, local stamps without `Z`, per-route `pulledAt`, optional `segments`). The
+      per-route `dateWindow` was recorded but never read; it is now returned by
+      `Explore.routeDetail()` so the panel can tell "date outside the pulled window" from "no
+      itineraries that day". Not done: warn in `ingestTripsText` when `meta.schema` is newer than the page knows.
+- [ ] **Panel layout reviewed by human.** Review notes: acceptance row (AC836, LH2476 via MUC ·
+      17h 00m · 186,800 · $152.82 CAD), Direct-only / Min-seats re-filtering without a re-click,
+      Layovers column after a `--date` pull, selected-cell outline, tooltips, Watchlist command and
+      ✓ ages all verified. Added the outside-window empty state. Not done: keyboard access to date
+      cells (they are click-only `div`s; `tabindex` + Enter/Space would fix it).
 
-## Phase 2: Core feature
-- [x] **Task 5** Grid cell click → itinerary panel (`#gridItins`), 3 empty states, Direct-only / Min-seats honoured, top 15 + show all, selected-cell outline, stop count in tooltips — M
+## 2026-09-12 — loose ends (working tree, not yet committed)
+- [x] `node ingest.mjs --returns` pulls return legs for one run without editing CONFIG
+      (README setup step + config table + notes, Round-trips empty state name the flag)
+- [x] Panel: outside-window empty state (`lib/explore.js`, `index.html`, test)
+- [x] `CLAUDE.md` for future sessions
+- [x] Live cache re-pulled with `--returns` (391 calls, 255,621 records, 2026-09-12) — Round trips tab verified pairing YYZ⇄LHR
 
-### Checkpoint B
-- [x] YYZ→LHR J 2026-10-11 shows AC836, LH2476 via MUC · 17h 00m · 186,800 pts
-- [x] Re-pull + Reload refreshes `pulledAt`
-- [ ] Panel layout reviewed by human (pending — built autonomously)
-
-## Phase 3: Polish
-- [x] **Task 6** Watchlist: `node detail.mjs …` command for starred routes + Copy button + ✓ age per detailed row — S
-- [x] **Task 7** `make-sample.mjs` → `sample-trips.json`; README (setup step, Itinerary detail section, grid bullet, notes, dev commands) — M
-- [x] **Task 8** `--date` exact layovers via `/trips/{id}`, Layovers column — M
-- [x] **Task 9** "via MUC" routing badges in Sweet-spot / Discover for detailed routes — S
-
-### Checkpoint: Complete
-- [x] All acceptance criteria met; `node --test` green (49 tests); UI verified in headless Chrome (dump-dom harness — the verify skill's Chrome MCP isn't available here)
-- [x] README accurate; `git status` clean of cache files
-- [ ] Ready for PR (branch `itinerary-detail`, awaiting your review)
-
-## Follow-up (separate PR)
-- [ ] `ingest.mjs normalize()`: capture `XDirectRemainingSeats / XDirectTotalTaxes / XDirectAirlines` (no extra requests)
+## Follow-ups
+- [ ] Keyboard access to grid date cells (`tabindex="0"` + Enter/Space on `#gridMonths`)
+- [ ] `ingestTripsText`: warn on an unknown/newer `meta.schema`

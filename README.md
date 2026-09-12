@@ -39,7 +39,8 @@ fix the script.
    ```
    This writes `aeroplan-cache.json`. The first run prints the real API record shape so
    you can confirm field names. By default it pulls **North America–origin** Aeroplan
-   availability for the **next 90 days**.
+   availability for the **next 90 days**. Add `--returns` to also pull the return legs
+   (destination→home) so the **Round trips** tab can pair them — roughly twice the API calls.
 
 4. **Explore.** Open `index.html` in Chrome or Edge, click **“Open cache file…”**, and
    pick `aeroplan-cache.json` (or the bundled `sample-cache.json` to look around before you
@@ -118,7 +119,7 @@ Edit the `CONFIG` block at the top of `ingest.mjs`:
 | `startDate` / `endDate` | today → +90 days | Departure date window (`YYYY-MM-DD`). |
 | `originRegions` | `["North America"]` | `[]` = pull every region (uses more quota). |
 | `destinationRegion` | `null` | Restrict destinations to one region, or all. |
-| `pullReturns` | `false` | Also pull return legs (dest→home) so the **Round trips** tab can pair them. Adds a reverse pass per origin region — roughly 2× quota. |
+| `pullReturns` | `false` | Also pull return legs (dest→home) so the **Round trips** tab can pair them. Adds a reverse pass per origin region — roughly 2× quota. `node ingest.mjs --returns` turns it on for one run. |
 | `take` | `1000` | Page size (10–1000). Bigger = fewer API calls. |
 | `quotaFloor` | `25` | Stop early if remaining daily calls drops this low. |
 | `onlyKeepAvailable` | `true` | Drop records with no bookable cabin. |
@@ -178,8 +179,9 @@ direction separately, so it's an estimate — confirm both legs).
   aircanada.com.
 - **Round trips need both directions.** Views 1–4 show directional origin→destination award
   space for a single date. The **Round trips** tab pairs outbound + return for you, but only
-  when the cache holds the return legs — ingest with `pullReturns: true` (or `originRegions:
-  []`). Aeroplan prices each direction separately at booking, so confirm both legs.
+  when the cache holds the return legs — ingest with `node ingest.mjs --returns` (or set
+  `pullReturns: true` / `originRegions: []` in CONFIG). Aeroplan prices each direction
+  separately at booking, so confirm both legs.
 - **Direct only describes the nonstop.** A cabin's points, seats, taxes and carriers normally
   belong to its *cheapest* itinerary, which may connect. With **Direct only** ticked, every view
   reports the nonstop's own numbers instead (a nonstop is often pricier with fewer seats), so the
