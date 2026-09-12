@@ -1010,8 +1010,8 @@ function renderRT() {
     info.textContent = "";
     $("rtBody").innerHTML = res.hasOutboundData
       ? `<div class="empty-state" style="padding:50px 20px"><h2>No return availability for ${esc(dest)}→${esc(origin)}</h2>
-         <p>This cache has the outbound leg but not the return. Pull returns by setting
-         <code>pullReturns: true</code> in <code>ingest.mjs</code> (or <code>originRegions: []</code>), re-run it, then hit <b>↻ Reload</b>.</p></div>`
+         <p>This cache has the outbound leg but not the return. Pull returns with
+         <code>node ingest.mjs --returns</code> (or set <code>pullReturns: true</code> / <code>originRegions: []</code> in its CONFIG), then hit <b>↻ Reload</b>.</p></div>`
       : `<div class="empty-state" style="padding:50px 20px"><h2>No ${cabinLabel(cabin)} availability ${esc(origin)}→${esc(dest)}</h2>
          <p>Pick another route or cabin, or widen the date window in the filters.</p></div>`;
     return;
