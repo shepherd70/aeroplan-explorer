@@ -118,6 +118,9 @@
   .cell.has { color: #04140a; font-weight: 600; cursor: pointer; }
   .cell.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
   .cell.has:focus-visible { outline: 2px dashed var(--accent); outline-offset: 1px; }
+  .itins .leg + .leg { margin-top: 12px; }
+  tbody tr.selected, tbody tr.selected:hover { background: rgba(56,189,248,.16); }
+  tbody tr.clickable:focus-visible { outline: 2px dashed var(--accent); outline-offset: -2px; }
   .itins { margin: 6px 0 16px; }
   .itins h4 { margin: 0 0 6px; font-size: 13px; }
   .itins .tablewrap { max-height: 380px; }
@@ -255,6 +258,7 @@
         </select></div>
         <span class="hint" id="rtInfo"></span>
       </div>
+      <div class="itins" id="rtItins"></div>
       <div id="rtBody"></div>
     </section>
 
@@ -392,6 +396,8 @@ let TRIPS = null;              // parsed trips.cache.json (itinerary detail from
 const TRIPS_SCHEMA = 1;        // the trips.cache.json schema this page understands (detail.mjs writes meta.schema)
 let gridSel = null;            // { o, d, date } — the date cell selected in the grid (itinerary panel)
 let gridSelAll = false;        // show every itinerary for the selected date, not just the first 15
+let rtSel = null;              // { origin, dest, cabin, dateOut, dateRet } — the round-trip row whose legs are shown
+let rtSelAll = false;          // show every itinerary for both legs, not just the first 15 each
 let tripsHandle = null;
 const sortState = { discover: settings.sortDiscover, afford: settings.sortAfford }; // persisted via settings
 
@@ -559,10 +565,11 @@ function trendBadge(tr) {
 }
 // "via MUC" badge from itinerary detail: how the cheapest itinerary routes. Empty when the
 // route has no detail. A nonstop cheapest only gets its own badge when the row lacks one.
-function viaBadge(origin, dest, { cabin, date }, hasDirectBadge) {
+function viaBadge(origin, dest, { cabin, date, exact }, hasDirectBadge) {
   // Prefer the row's own date; if detail has nothing there (availability drifted since the
   // pull), fall back to the cheapest itinerary on any pulled date — the tooltip names it.
-  const best = Explore.cheapestRouting(TRIPS, origin, dest, { cabin, date }) || (date ? Explore.cheapestRouting(TRIPS, origin, dest, { cabin }) : null);
+  // Rows that ARE a date (round trips) pass `exact` to skip that fallback.
+  const best = Explore.cheapestRouting(TRIPS, origin, dest, { cabin, date }) || (date && !exact ? Explore.cheapestRouting(TRIPS, origin, dest, { cabin }) : null);
   if (!best) return "";
   const when = best.date ? ` on ${fmtDate(best.date)}` : "";
   const what = `cheapest ${cabinLabel(best.cabin)} itinerary${when}: ${best.flights.join(", ") || "?"} · ${fmt(best.miles)} pts`;
@@ -1013,12 +1020,14 @@ function updateRTDests() {
 function renderRT() {
   if (!DATA) return;
   const origin = $("rtOrigin").value, dest = $("rtDest").value, cabin = $("rtCabin").value;
+  if (rtSel && (rtSel.origin !== origin || rtSel.dest !== dest || rtSel.cabin !== cabin)) { rtSel = null; rtSelAll = false; }
   const res = Explore.roundTripRows(RECORDS, settings, {
     origin, dest, cabin, minNights: settings.rtMinNights, maxNights: settings.rtMaxNights,
     manualFares: cashFares, faresCurrency: fareCurrency(), today: localToday(),
   });
   const info = $("rtInfo");
   if (!res.hasReturnData) {
+    rtSel = null; $("rtItins").innerHTML = "";
     info.textContent = "";
     $("rtBody").innerHTML = res.hasOutboundData
       ? `<div class="empty-state" style="padding:50px 20px"><h2>No return availability for ${esc(dest)}→${esc(origin)}</h2>
@@ -1046,9 +1055,10 @@ function renderRT() {
   for (const r of rows) {
     const t = mx > mn ? (r.totalMiles - mn) / (mx - mn) : 0;
     const fits = bal > 0 && r.totalMiles <= bal;
-    h += `<tr>
-      <td class="l">${r.dateOut}${r.directOut ? ' <span class="badge direct">nonstop</span>' : ""}</td>
-      <td class="l">${r.dateRet}${r.directRet ? ' <span class="badge direct">nonstop</span>' : ""}</td>
+    const sel = rtSel && rtSel.dateOut === r.dateOut && rtSel.dateRet === r.dateRet ? " selected" : "";
+    h += `<tr class="clickable${sel}" data-out="${r.dateOut}" data-ret="${r.dateRet}" tabindex="0" role="button" title="Click for both legs' flights">
+      <td class="l">${r.dateOut}${r.directOut ? ' <span class="badge direct">nonstop</span>' : ""}${viaBadge(origin, dest, { cabin, date: r.dateOut, exact: true }, r.directOut)}</td>
+      <td class="l">${r.dateRet}${r.directRet ? ' <span class="badge direct">nonstop</span>' : ""}${viaBadge(dest, origin, { cabin, date: r.dateRet, exact: true }, r.directRet)}</td>
       <td class="num">${r.nights}</td>
       <td class="num">${fmt(r.milesOut)}</td>
       <td class="num">${fmt(r.milesRet)}</td>
@@ -1057,9 +1067,40 @@ function renderRT() {
       <td class="num" title="${r.cpp == null ? "add a cash fare on both legs (Sweet-spot tab) for ¢/pt" : r.cppIsNet ? "net of $" + fmt(r.totalTaxes) + " " + esc(r.taxesCurrency) + " taxes" : "gross — taxes not netted"}">${r.cpp != null ? r.cpp.toFixed(2) : "—"}</td>
       <td class="l">${bal > 0 ? (fits ? '<span class="badge afford">within balance</span>' : `<span class="muted">${fmt(r.totalMiles - bal)} over</span>`) : '<span class="muted">set balance</span>'}</td></tr>`;
   }
+  // Itinerary detail is per directional route, so a round trip needs both pulled.
+  const cmdBoth = `node detail.mjs ${origin}-${dest} ${dest}-${origin}`;
+  const missing = [[origin, dest], [dest, origin]].filter(([a, b]) => !Explore.routeDetail(TRIPS, a, b)).map(([a, b]) => `${a}-${b}`);
+  const detailHint = !TRIPS
+    ? `Click a row for each leg's flights — needs <code>${cmdBoth}</code>, then <b>Open itineraries…</b> in the header.`
+    : missing.length
+      ? `Click a row for each leg's flights — no detail yet for ${missing.map(esc).join(" and ")}: <code>node detail.mjs ${missing.join(" ")}</code>, then <b>↻ Reload</b>.`
+      : `Click a row for both legs' flights.`;
   h += `</tbody></table></div>
+    <p class="hint">${detailHint}</p>
     <p class="hint">Each row pairs an outbound date with the cheapest-points return ${settings.rtMinNights}–${settings.rtMaxNights} nights later. Points &amp; taxes are the real total of both legs; Aeroplan still prices each direction separately at booking, so confirm both. RT ¢/pt uses the two one-way cash fares when present.</p>`;
   $("rtBody").innerHTML = h;
+  // Row click, Enter or Space -> both legs' itineraries above the table. Re-rendering replaces
+  // the rows, so a keyboard pick re-focuses the new selected row to keep the Tab position.
+  const pick = (tr, viaKeyboard) => {
+    rtSel = { origin, dest, cabin, dateOut: tr.dataset.out, dateRet: tr.dataset.ret }; rtSelAll = false;
+    renderRT();
+    if (viaKeyboard) $("rtBody").querySelector("tr.selected")?.focus();
+  };
+  $("rtBody").querySelectorAll("tr.clickable").forEach((tr) => {
+    tr.onclick = () => pick(tr, false);
+    tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(tr, true); } };
+  });
+  renderRTItineraries(origin, dest, cabin);
+}
+// The selected round trip's two legs, each rendered like the date grid's panel.
+function renderRTItineraries(origin, dest, cabin) {
+  const box = $("rtItins");
+  if (!rtSel) { box.innerHTML = ""; return; }
+  const cmd = `node detail.mjs ${origin}-${dest} ${dest}-${origin}`;
+  const leg = (o, d, date, label, moreId) => `<div class="leg">${legItinerariesHtml(o, d, date, cabin, {
+    title: `${label} · ${fmtDate(date)} · ${esc(o)}→${esc(d)} · ${cabinLabel(cabin)}`, cmd, showAll: rtSelAll, moreId })}</div>`;
+  box.innerHTML = leg(origin, dest, rtSel.dateOut, "Outbound", "rtMoreOut") + leg(dest, origin, rtSel.dateRet, "Return", "rtMoreRet");
+  for (const id of ["rtMoreOut", "rtMoreRet"]) { const b = $(id); if (b) b.onclick = () => { rtSelAll = true; renderRTItineraries(origin, dest, cabin); }; }
 }
 
 // === Watchlist (starred routes + optional points targets) ==================
