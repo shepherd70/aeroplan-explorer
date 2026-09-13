@@ -12,11 +12,13 @@ subscription (~$9.99/mo) — the tool never shares a key or data.
 | License | None. GitHub shows no license, so by default nobody may reuse the code. |
 | CI | None. Tests run only when someone remembers `node --test`. |
 | Repo settings | Private, issues on, description set, no topics. Branch protection needs a public repo or GitHub Pro — available the moment it flips. |
-| Shipped data | `sample-cache.json` (756 KB) and `sample-trips.json` (192 KB) are trimmed **real seats.aero API responses**; `tasks/plan.md`'s appendix quotes two raw API records. Earlier versions of the samples live in history. |
+| Shipped data | `sample-cache.json` (756 KB) and `sample-trips.json` (192 KB) are trimmed **real seats.aero API responses**; `docs/design/itinerary-detail.md`'s appendix quotes two raw API records. Earlier versions of the samples live in history. |
 | seats.aero API terms | Partner API docs: *"can be used by Pro users for non-commercial purposes and only by written agreement for commercial use"* and *"governed by the Seats.aero terms of use"* (https://seats.aero/terms — the terms page refuses automated fetches, so read it in a browser). |
 | Local `.env` | Also carries stale `AMADEUS_CLIENT_ID/SECRET` lines from the removed enrichment — local-only, harmless, worth deleting. |
 
-## Decisions that are yours
+## Decisions (made 2026-09-13)
+Chosen: **1(a)** synthetic samples with a history rewrite; **2** MIT, © Travis Shepherd; **3** as recommended. The options are kept below for the record.
+
 
 1. **The sample data.** The repo redistributes seats.aero award data (small, stale, trimmed — but
    theirs). Read the terms of use with that in mind, and if they don't clearly allow it, pick:
@@ -27,7 +29,7 @@ subscription (~$9.99/mo) — the tool never shares a key or data.
    - **(c) No samples** — first run is `node ingest.mjs`. Simplest, weakest first impression.
    Whichever you choose, note that **git history keeps the old samples**; if the terms forbid
    redistribution, publishing this repo as-is exposes them anyway. The clean options are a
-   history rewrite (`git filter-repo` on the two sample files and `tasks/plan.md`'s appendix)
+   history rewrite (`git filter-repo` on the two sample files and `docs/design/itinerary-detail.md`'s appendix)
    before flipping, or publishing from a fresh single-commit repo.
 2. **License.** MIT recommended: permissive, one file, matches a zero-dependency hobby tool.
    Copyright line: your name, 2026.
@@ -35,20 +37,20 @@ subscription (~$9.99/mo) — the tool never shares a key or data.
    not affiliated with Air Canada, Aeroplan or seats.aero; read-only; availability can be stale.
 4. **Working notes in the repo.** `tasks/` and `.claude/` are visible once public. Suggested:
    keep `CLAUDE.md` and the `verify` skill (useful to contributors using Claude Code; fix the
-   path), move `tasks/plan.md` to `docs/design/itinerary-detail.md` as a design doc, and turn
-   `tasks/todo.md` into `CHANGELOG.md` (dated entries per merged PR) so the session-specific
+   path), move `docs/design/itinerary-detail.md` to `docs/design/itinerary-detail.md` as a design doc, and turn
+   `CHANGELOG.md` into `CHANGELOG.md` (dated entries per merged PR) so the session-specific
    review notes go away.
 
 ## Steps
 
 ### Phase 0 — before the flip (one or two PRs, plus your decisions above)
-- [ ] Land the fixes from the 2026-09-13 review pass (ten confirmed findings, all UX/consistency; none block publishing but a public first impression should not include them).
-- [ ] Decide on the samples (decision 1); if synthetic: `make-sample.mjs --synthetic`, regenerate, update README's sample note; if the terms forbid redistribution: rewrite history or start a fresh repo.
-- [ ] `LICENSE` (MIT).
-- [ ] README public pass: one-paragraph pitch with a screenshot of the Sweet-spot finder and the date grid (headless Chrome can produce them from the sample); **Prerequisites** (Node 18+, seats.aero Pro, Chrome/Edge for the file-handle flow, other browsers via the fallback picker); **Disclaimer**; **Contributing** (no dependencies, `node --test`, UI changes verified in a browser via the `verify` skill, one PR per change); link to seats.aero and its quota rules.
-- [ ] Generalize the path in `.claude/skills/verify/SKILL.md`; move `tasks/plan.md` and convert `tasks/todo.md` (decision 4).
-- [ ] CI: `.github/workflows/test.yml` — `node --test` on Node 18, 20, 22 and 24 for pushes and PRs, plus `node --check` on the three scripts.
-- [ ] Delete the stale `AMADEUS_*` lines from your local `.env`.
+- [x] Land the fixes from the 2026-09-13 review pass (PR #10) (ten confirmed findings, all UX/consistency; none block publishing but a public first impression should not include them).
+- [x] Samples are synthetic: `make-sample.mjs` now generates them (real airports, invented everything else; deterministic; `test/sample.test.mjs`). History rewrite to strip the old real-data blobs: **after this PR merges** (needs the final main).
+- [x] `LICENSE` (MIT).
+- [x] README public pass: one-paragraph pitch with a screenshot of the Sweet-spot finder and the date grid (headless Chrome can produce them from the sample); **Prerequisites** (Node 18+, seats.aero Pro, Chrome/Edge for the file-handle flow, other browsers via the fallback picker); **Disclaimer**; **Contributing** (no dependencies, `node --test`, UI changes verified in a browser via the `verify` skill, one PR per change); link to seats.aero and its quota rules.
+- [x] Generalize the path in `.claude/skills/verify/SKILL.md`; `tasks/plan.md` → `docs/design/itinerary-detail.md`; `tasks/todo.md` → `CHANGELOG.md`; this plan → `docs/`.
+- [x] CI: `.github/workflows/test.yml` — `node --test` on Node 18, 20, 22 and 24 for pushes and PRs, plus `node --check` on the three scripts.
+- [x] Delete the stale `AMADEUS_*` lines from your local `.env`.
 
 ### Phase 1 — the flip (your call to run; irreversible for history)
 - [ ] `gh repo edit --visibility public --accept-visibility-change-consequences`

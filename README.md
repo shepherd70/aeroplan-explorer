@@ -4,6 +4,16 @@ Browse what your Aeroplan points can actually get you — by **destination**, by
 **value**, by **date flexibility**, and by **what your balance can book right now** —
 instead of Air Canada's search-one-route-and-one-date-at-a-time website.
 
+![Sweet-spot finder](docs/screenshots/sweet-spot.png)
+
+![Flexible date grid with itineraries](docs/screenshots/date-grid.png)
+
+**You need:** a [seats.aero](https://seats.aero) **Pro** subscription (~US$10/month) for the API
+key — this tool only reads what your own key can read — Node 18 or newer, and Chrome or Edge for
+the reload-in-place file flow (other browsers work with a plain file picker). It never books
+anything, is not affiliated with Air Canada, Aeroplan or seats.aero, and shows a snapshot of
+award space that can be stale by the time you look.
+
 Three pieces:
 
 - **`ingest.mjs`** — a small Node script that pulls Aeroplan award availability from the
@@ -45,7 +55,7 @@ fix the script.
 
 4. **Explore.** Open `index.html` in Chrome or Edge, click **“Open cache file…”**, and
    pick `aeroplan-cache.json` (or the bundled `sample-cache.json` to look around before you
-   ingest). The app remembers which file you picked — after re-running the ingester, hit
+   ingest — it is synthetic: real airports, invented prices). The app remembers which file you picked — after re-running the ingester, hit
    **↻ Reload**. Chrome/Edge may re-prompt for read permission once per session, then it
    re-reads the cache.
 
@@ -57,11 +67,12 @@ fix the script.
    then, in the **Flexible date grid**, click any date to see that day's flights. See
    [Itinerary detail](#itinerary-detail-flights-connections-aircraft-layovers) below.
 
-> Small samples ship with the repo — `sample-cache.json` and `sample-trips.json` — so you
-> can click around before you run anything (they include return legs and itineraries for
-> YYZ⇄LHR, so the **Round trips** tab works offline too). `node ingest.mjs` / `node detail.mjs` write the
-> **live** `aeroplan-cache.json` / `trips.cache.json` (both gitignored); open those once you
-> have them. (Regenerate the samples with `node make-sample.mjs`.)
+> Small **synthetic** samples ship with the repo — `sample-cache.json` and `sample-trips.json` —
+> so you can click around before you run anything: real airport codes and distances, invented
+> prices, seats, taxes and flights (nothing from seats.aero). They cover every view, including
+> itineraries, exact layovers and **Round trips** for YYZ⇄LHR. `node ingest.mjs` / `node detail.mjs`
+> write the **live** `aeroplan-cache.json` / `trips.cache.json` (both gitignored); open those once
+> you have them. Regenerate the samples with `node make-sample.mjs` (deterministic; `--start` moves the window).
 
 ---
 
@@ -267,7 +278,7 @@ same logic is unit-tested.
 
 ```
 node --test           # runs test/*.test.mjs (normalize + explorer transforms + detail puller)
-node make-sample.mjs  # regenerate the committed sample-cache.json (+ sample-trips.json) from full pulls
+node make-sample.mjs  # regenerate the committed synthetic samples (deterministic; --start YYYY-MM-DD, --seed N)
 ```
 
 - `lib/explore.js` — pure: filtering, destination/sweet-spot/affordability aggregation, and
@@ -286,3 +297,29 @@ node make-sample.mjs  # regenerate the committed sample-cache.json (+ sample-tri
       duration: 1020, stops: 1, miles: 186800, taxes: 15282, taxesCurrency: "CAD", seats: 5,
       segments?: [ { flight, from, to, dep, arr, duration, aircraft, aircraftCode, fareClass } ] } ] } } } }
 ```
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. The ground rules are short:
+
+- **No dependencies, no build step.** `index.html` opens over `file://`; the scripts use Node's
+  built-ins. A PR that adds a package needs a very good reason.
+- **Pure logic goes in `lib/explore.js` with a test** (`node --test`); `index.html` only renders.
+  CI runs the suite on Node 18–24 for every PR.
+- **UI changes are verified in a real browser** — see `.claude/skills/verify/SKILL.md` for the
+  recipe (serve the repo on an odd port, load data with `ingestText()` / `ingestTripsText()`,
+  assert on rendered text and state).
+- **Never commit real seats.aero data**, even trimmed: the samples are synthetic on purpose.
+- One change per PR; `CHANGELOG.md` gets a line when it merges.
+
+## Support
+
+Best effort, as a side project. The two things newcomers hit most: the API key must come from a
+seats.aero **Pro** account, and the daily quota is 1,000 calls (a full pull is ~200, ~400 with
+`--returns`; the scripts stop before draining it).
+
+## License
+
+[MIT](LICENSE) © 2026 Travis Shepherd. Not affiliated with Air Canada, Aeroplan or seats.aero.

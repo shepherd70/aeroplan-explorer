@@ -1,0 +1,28 @@
+# Changelog
+
+One entry per merged pull request, newest first. Dates are merge dates.
+
+## 2026-09-13
+
+- **#10 Review fixes.** An independent review of #5–#9 confirmed ten findings; all fixed. A `--date` day beyond a route's pulled window now shows its itineraries; a stale Round-trips selection clears when the table re-pairs; each leg box suggests only its own route's command; picks no longer rebuild tables (focus and scroll survive); the newer-schema prompt asks once; unwatching the last Watchlist row keeps focus; the sample generator measures its budget on what it writes and never loses the cache sample.
+- **#9 Keyboard access for table rows and stars.** Sweet-spot and Destination-discovery rows and the watch stars are focusable; Enter or Space acts like a click; a keyboard jump into the grid lands on a date cell.
+- **Scheduled refresh (task).** A Windows Task Scheduler task runs `refresh.sh --returns` every morning (documented in the README; not part of the repo).
+
+## 2026-09-12
+
+- **#8 Scheduled daily pulls.** `node ingest.mjs --quiet` for log-friendly runs, `refresh.sh` as the scheduler entry point, and a README recipe for Task Scheduler (WSL) and cron.
+- **#7 Itinerary detail on the Round trips tab.** Click a row to see both legs' flights; per-leg routing badges; `Explore.detailStatus()`; the grid's panel became a shared per-leg renderer; samples gained return legs.
+- **#6 Keyboard access for grid date cells** and a schema-version check on the itineraries file.
+- **#5 Loose ends.** `node ingest.mjs --returns`; an "outside the pulled window" state for the grid panel; `CLAUDE.md`; tracker refresh.
+
+## 2026-09-11
+
+- **#4 Direct only describes the nonstop.** Every view reports the nonstop's own points, seats, taxes and carriers when the filter is on.
+- **#3 Direct-only fields in the ingester.** `XDirectRemainingSeats / XDirectTotalTaxes / XDirectAirlines` captured with no extra API calls.
+- **#2 On-demand itinerary detail.** `detail.mjs` → `trips.cache.json`; flight numbers, connections, aircraft, times, exact layovers via `--date`; the date grid's itinerary panel; Watchlist command; sample itineraries. Design notes in `docs/design/itinerary-detail.md`.
+- Amadeus cash-fare enrichment removed (that API shut down July 2026); fares are manual.
+
+## 2026-06-27
+
+- **#1 Build-out.** Tests; taxes and tax-honest ¢/pt; round-trip pairing; price history and the Trend column; Watchlist; a live-API pagination fix.
+- Initial commit: the ingester, the six-view explorer and the first trimmed sample.
