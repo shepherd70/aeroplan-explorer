@@ -49,6 +49,13 @@ Trend, Watchlist status and the freshness pill compare pulls, so they need a dai
 - [x] README "Keeping it fresh": Task Scheduler (WSL) and cron examples; detail pulls stay manual on purpose
 - [x] Verified: quiet vs normal output against a fake API; wrapper invoked through wsl.exe as a task would (Node found, log written, exit code propagated)
 
+## 2026-09-13 — keyboard access for table rows and stars (branch `table-row-keyboard`)
+- [x] Sweet-spot and Discover rows: focusable buttons; Enter/Space opens the grid, which then focuses its first available date
+- [x] Watch stars (Sweet-spot, Watchlist): focusable; Enter/Space toggles and focus survives the re-render
+- [x] Keys typed into a row's fare input never trigger the row; README notes the keyboard model
+- [x] Verified in headless Chrome on the sample (rows, stars, fare-input guard, focus after re-render and after unwatch)
+
 ## Follow-ups
+- [ ] Sortable column headers (Discover, What can I book) are still click-only
 - [x] Keyboard access to grid date cells (`tabindex="0"` + Enter/Space on `#gridMonths`) — 2026-09-12
 - [x] `ingestTripsText`: confirm before loading a newer `meta.schema` — 2026-09-12

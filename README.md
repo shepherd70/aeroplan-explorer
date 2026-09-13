@@ -250,6 +250,9 @@ direction separately, so it's an estimate — confirm both legs).
 - **Itinerary detail is per route.** `trips.cache.json` only holds the routes you pulled with
   `node detail.mjs`, each with its own pull time. Itinerary times are local wall-clock as
   published; seats and prices per itinerary are as of that pull.
+- **Keyboard.** Every clickable row (Destination discovery, Sweet-spot, Round trips), watch star
+  and date cell is reachable with Tab; Enter or Space does what a click does, and a jump to the
+  date grid lands on its first available date.
 - **Browser support:** "Open cache file…" and "Open itineraries…" use the File System Access
   API (Chrome/Edge). Other browsers fall back to a normal file picker (no auto-reload).
 
