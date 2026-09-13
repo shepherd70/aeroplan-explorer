@@ -376,6 +376,10 @@ test("detailStatus says why a leg has nothing before the day is even looked at",
   assert.equal(detailStatus(windowed, "YYZ", "LHR", "2026-10-11").detail.dateCount, 2);
   // No window recorded (older file): can't tell "outside" from "none", so look at the day.
   assert.equal(detailStatus(TRIPS, "YYZ", "LHR", "2026-12-11").status, "ok");
+  // A --date pull can add a day beyond the window; the file's contents win over the window.
+  const late = { routes: { "YYZ-LHR": { ...windowed.routes["YYZ-LHR"], dates: { ...windowed.routes["YYZ-LHR"].dates, "2026-12-20": [trip({ id: "late" })] } } } };
+  assert.equal(detailStatus(late, "YYZ", "LHR", "2026-12-20").status, "ok");
+  assert.equal(detailStatus(late, "YYZ", "LHR", "2026-12-21").status, "outside-window");
 });
 
 test("layoverMinutes derives connection waits from segments, null without them", () => {
