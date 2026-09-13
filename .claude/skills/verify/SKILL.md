@@ -11,7 +11,7 @@ over http (the Chrome extension refuses `file://` URLs).
 ## Launch
 
 1. Serve the repo root on localhost. Any static server works; a zero-dep one:
-   write a ~20-line `node:http` server to the scratchpad serving `C:\dev\aeroplan-explorer`
+   write a ~20-line `node:http` server to the scratchpad serving the repo root
    and run it in the background (`node serve.mjs`, port 8791).
    Port choice matters: an uncommon port (8791) gives a fresh localStorage origin,
    so filters/watches/fares you touch during testing never pollute the user's real state.
