@@ -131,7 +131,7 @@ async function mainDate(args, apiKey, existing) {
       apiCalls += r.apiCalls;
       if (r.quotaRemaining != null) quotaRemaining = r.quotaRemaining;
       const prev = pulled[key] || existing?.routes?.[key] || { dateWindow: { start: date, end: date }, dates: {} };
-      const entry = { ...prev, pulledAt: new Date().toISOString(), dates: { ...prev.dates } };
+      const entry = { ...prev, pulledAt: new Date().toISOString(), dateWindow: widenWindow(prev.dateWindow, date), dates: { ...prev.dates } };
       entry.dates[date] = mergeDateTrips(entry.dates[date], r.trips);
       pulled[key] = entry;
       const withSegs = entry.dates[date].filter((t) => t.segments).length;
@@ -280,6 +280,14 @@ function mergeDateTrips(existing, pulled) {
   return [...byId.values()].sort((a, b) => a.miles - b.miles || a.duration - b.duration);
 }
 
+// The window a route was pulled for, stretched to include `date` — a --date pull can add a day
+// the full-route pull never covered, and the explorer reads the window to explain empty days.
+// A missing or partial window collapses to the single date.
+function widenWindow(win, date) {
+  const s = win?.start, e = win?.end;
+  return { start: s && s < date ? s : date, end: e && e > date ? e : date };
+}
+
 // --- cache file -----------------------------------------------------------------
 
 // Existing trips cache (or null). A corrupt file aborts rather than being silently replaced.
@@ -384,4 +392,4 @@ function normalizeTrip(raw) {
 }
 
 // Exported for unit tests. Importing this file does NOT run the puller (see isMain).
-export { normalizeTrip, localStamp, parseArgs, pullRoute, mergeRoutes, defaultWindow, availabilityIdFor, pullTrips, mergeDateTrips };
+export { normalizeTrip, localStamp, parseArgs, pullRoute, mergeRoutes, defaultWindow, availabilityIdFor, pullTrips, mergeDateTrips, widenWindow };

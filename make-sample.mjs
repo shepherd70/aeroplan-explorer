@@ -44,24 +44,73 @@ const all = cache.records || [];
 if (!all.length) { console.error("❌ Cache has no records."); process.exit(1); }
 
 const keepOrigin = new Set(CONFIG.origins);
-const trips = existsSync(CONFIG.tripsIn) ? JSON.parse(readFileSync(CONFIG.tripsIn, "utf8")) : null;
 // The far end of a record: its destination on an outbound leg, its origin on a return leg.
 const far = (r) => (keepOrigin.has(r.origin) ? r.destination : r.origin);
-// Return legs are kept only for destinations that have itinerary detail in either direction
-// (see the header comment); everything else is outbound-only, as before.
+const CABINS = ["Y", "W", "J", "F"];
+
+// --- itineraries sample (optional) ------------------------------------------
+// Built FIRST, because it decides which return legs the cache sample keeps. Guarded: a bad
+// trips file costs the itineraries sample and the return legs, never the cache sample.
+let trips = null;
+if (!existsSync(CONFIG.tripsIn)) {
+  console.log(`   (no ${CONFIG.tripsIn} — run "node detail.mjs ORIG-DEST" to also ship a sample-trips.json)`);
+} else {
+  try { trips = JSON.parse(readFileSync(CONFIG.tripsIn, "utf8")); }
+  catch (e) { console.warn(`⚠ ${CONFIG.tripsIn} is not valid JSON (${e.message}) — skipping the itineraries sample.`); }
+}
+
+// Return legs (dest→home) are kept only for destinations whose RETURN route has detail, and
+// only on dates that have detail, so every round trip the sample can pair also has flights to
+// show. Everything else is outbound-only, as before.
 const returnDests = new Set();
 for (const key of Object.keys(trips?.routes || {})) {
   const [a, b] = key.split("-");
-  if (keepOrigin.has(a)) returnDests.add(b);
-  if (keepOrigin.has(b)) returnDests.add(a);
+  if (keepOrigin.has(b) && !keepOrigin.has(a)) returnDests.add(a);
 }
-let recs = all.filter((r) => keepOrigin.has(r.origin) || (keepOrigin.has(r.destination) && returnDests.has(r.origin)));
+const candidates = all.filter((r) => keepOrigin.has(r.origin) || (keepOrigin.has(r.destination) && returnDests.has(r.origin)));
+
+const tripRoutes = {};    // trimmed itineraries per route, for sample-trips.json
+const detailedDates = {}; // "ORIG-DEST" -> Set of the dates kept there
+try {
+  for (const [key, entry] of Object.entries(trips?.routes || {})) {
+    const [o, dst] = key.split("-");
+    if (!keepOrigin.has(o) && !keepOrigin.has(dst)) continue;
+    if (!entry || typeof entry !== "object" || !entry.dates || typeof entry.dates !== "object") throw new Error(`route ${key} has no dates`);
+    // Dates where the cache shows each cabin bookable, so every cabin has clickable detail.
+    const keepDates = new Set();
+    for (const X of CABINS) {
+      candidates.filter((r) => r.origin === o && r.destination === dst && r.cabins?.[X]?.available && Array.isArray(entry.dates[r.date]))
+        .map((r) => r.date).sort().slice(0, CONFIG.tripsDatesPerCabin).forEach((d) => keepDates.add(d));
+    }
+    if (!keepDates.size) continue;
+    const dates = {};
+    for (const d of [...keepDates].sort()) {
+      const perCabin = {};
+      dates[d] = [];
+      for (const t of [...entry.dates[d]].sort((a, b) => a.miles - b.miles || a.duration - b.duration)) {
+        if ((perCabin[t.cabin] = (perCabin[t.cabin] || 0) + 1) <= CONFIG.tripsPerCabin) dates[d].push(t);
+      }
+    }
+    tripRoutes[key] = { ...entry, dates };
+    detailedDates[key] = new Set(Object.keys(dates));
+  }
+} catch (e) {
+  console.warn(`⚠ Could not build the itineraries sample from ${CONFIG.tripsIn}: ${e.message} — writing the cache sample without return legs.`);
+  for (const k of Object.keys(tripRoutes)) delete tripRoutes[k];
+  for (const k of Object.keys(detailedDates)) delete detailedDates[k];
+}
+
+// --- availability sample ------------------------------------------------------
+// Outbound legs keep every date; return legs only the dates with detail (decided above), so
+// the byte budget below measures exactly what gets written.
+let recs = candidates.filter((r) => keepOrigin.has(r.origin) || detailedDates[`${r.origin}-${r.destination}`]?.has(r.date));
 
 // Destinations with itinerary detail come first (so sample-trips.json lines up with the
 // sample), then the best-covered ones; take as many as fit the byte budget.
 const freq = {};
 for (const r of recs) freq[far(r)] = (freq[far(r)] || 0) + 1;
-const detailDests = new Set([...returnDests].filter((d) => freq[d]));
+const farOf = (key) => { const [a, b] = key.split("-"); return keepOrigin.has(a) ? b : a; };
+const detailDests = new Set(Object.keys(tripRoutes).map(farOf).filter((d) => freq[d]));
 const ordered = [
   ...detailDests,
   ...Object.entries(freq).sort((a, b) => b[1] - a[1]).map(([d]) => d).filter((d) => !detailDests.has(d)),
@@ -75,50 +124,10 @@ for (const d of ordered) {
   keepDest.add(d); bytes += chunk;
 }
 recs = recs.filter((r) => keepDest.has(far(r)));
-
-// --- itineraries sample (optional) ------------------------------------------
-// Built before the cache sample is written: return legs are then trimmed to the dates that
-// have detail, so every round trip the sample can pair also has flights to show.
-const detailedDates = {}; // "ORIG-DEST" -> Set of dates kept in sample-trips.json
-if (!existsSync(CONFIG.tripsIn)) {
-  console.log(`   (no ${CONFIG.tripsIn} — run "node detail.mjs ORIG-DEST" to also ship a sample-trips.json)`);
-} else {
-  const sampleRoutes = new Set(recs.map((r) => `${r.origin}-${r.destination}`));
-  const routes = {};
-  for (const [key, entry] of Object.entries(trips.routes || {})) {
-    if (!sampleRoutes.has(key)) continue;
-    // Dates where the sample cache shows each cabin bookable, so every cabin has clickable detail.
-    const [o, dst] = key.split("-");
-    const keepDates = new Set();
-    for (const X of ["Y", "W", "J", "F"]) {
-      recs.filter((r) => r.origin === o && r.destination === dst && r.cabins?.[X]?.available && entry.dates?.[r.date])
-        .map((r) => r.date).sort().slice(0, CONFIG.tripsDatesPerCabin).forEach((d) => keepDates.add(d));
-    }
-    const dates = {};
-    for (const d of [...keepDates].sort()) {
-      const perCabin = {};
-      dates[d] = [];
-      for (const t of [...entry.dates[d]].sort((a, b) => a.miles - b.miles || a.duration - b.duration)) {
-        if ((perCabin[t.cabin] = (perCabin[t.cabin] || 0) + 1) <= CONFIG.tripsPerCabin) dates[d].push(t);
-      }
-    }
-    routes[key] = { ...entry, dates };
-    detailedDates[key] = new Set(Object.keys(dates));
-  }
-  const n = Object.keys(routes).length;
-  if (!n) {
-    console.log(`   (trips.cache.json has no route the sample covers — nothing written to ${CONFIG.tripsOut})`);
-  } else {
-    const out = { meta: { ...trips.meta, sample: true, sampleNote: `Trimmed preview (${Object.keys(routes).join(", ")}). Run "node detail.mjs" for live itineraries.` }, routes };
-    const tjson = JSON.stringify(out);
-    writeFileSync(CONFIG.tripsOut, tjson);
-    console.log(`✅ Wrote ${n} route(s) of itineraries to ${CONFIG.tripsOut} — ${(Buffer.byteLength(tjson) / 1024).toFixed(0)} KB`);
-  }
-}
-
-// Return legs only on dates with detail (outbound legs keep every date, as before).
-recs = recs.filter((r) => keepOrigin.has(r.origin) || detailedDates[`${r.origin}-${r.destination}`]?.has(r.date));
-const returnsKept = [...returnDests].filter((d) => keepDest.has(d));
+// Only routes the cache sample actually covers ship itineraries.
+for (const key of Object.keys(tripRoutes)) if (!keepDest.has(farOf(key))) delete tripRoutes[key];
+// Advertise return legs from what is really in the file.
+const returnsKept = [...new Set(recs.filter((r) => !keepOrigin.has(r.origin)).map((r) => r.origin))].sort();
 
 const out = {
   meta: {
@@ -137,3 +146,14 @@ console.log(
   `✅ Wrote ${recs.length} records (${keepDest.size} destinations, origins ${CONFIG.origins.join(", ")}` +
     `${returnsKept.length ? ", returns for " + returnsKept.join(", ") : ""}) to ${CONFIG.outFile} — ${(Buffer.byteLength(json) / 1024).toFixed(0)} KB`
 );
+
+// --- itineraries sample, written last ------------------------------------------
+const n = Object.keys(tripRoutes).length;
+if (trips && !n) {
+  console.log(`   (trips.cache.json has no route the sample covers — nothing written to ${CONFIG.tripsOut})`);
+} else if (n) {
+  const tout = { meta: { ...trips.meta, sample: true, sampleNote: `Trimmed preview (${Object.keys(tripRoutes).join(", ")}). Run "node detail.mjs" for live itineraries.` }, routes: tripRoutes };
+  const tjson = JSON.stringify(tout);
+  writeFileSync(CONFIG.tripsOut, tjson);
+  console.log(`✅ Wrote ${n} route(s) of itineraries to ${CONFIG.tripsOut} — ${(Buffer.byteLength(tjson) / 1024).toFixed(0)} KB`);
+}
