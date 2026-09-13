@@ -86,6 +86,7 @@
   .trise { color: var(--bad); }
   .watch { cursor: pointer; color: var(--muted); user-select: none; }
   .watch.on { color: var(--accent2); }
+  .watch:focus-visible { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: 4px; }
   .muted { color: var(--muted); }
   .num { font-variant-numeric: tabular-nums; }
 
@@ -530,6 +531,22 @@ function tripsSummary() {
 
 // --- Helpers ----------------------------------------------------------------
 const $ = (id) => document.getElementById(id);
+// Enter or Space on a focused row/star acts like a click — but not when the key was typed into a
+// control inside it (the fare input, say). Returns true after preventing the default (Space scrolls).
+const rowKey = (e, el) => { if (e.target !== el || (e.key !== "Enter" && e.key !== " ")) return false; e.preventDefault(); return true; };
+// Watch stars: click, Enter or Space toggles. Toggling re-renders the table, so a keyboard toggle
+// puts focus back on the same star (or the first one left, when a Watchlist row just went away).
+function wireStars(root) {
+  root.querySelectorAll("[data-watch]").forEach((el) => {
+    el.onclick = () => toggleWatch(el.dataset.watch);
+    el.onkeydown = (e) => {
+      if (!rowKey(e, el)) return;
+      const key = el.dataset.watch;
+      toggleWatch(key);
+      (root.querySelector(`[data-watch="${CSS.escape(key)}"]`) || root.querySelector("[data-watch]"))?.focus();
+    };
+  });
+}
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c]));
 const fmt = (n) => n == null || !isFinite(n) ? "—" : Math.round(n).toLocaleString();
 // "2026-10-14" -> "Oct 14" (year appended only when it isn't the current year)
@@ -633,7 +650,7 @@ function renderDiscover() {
     ${cabs.map((X) => th(X, cabinLabel(X))).join("")}
     ${th("dateCount","Dates")}<th class="l">Nonstop</th></tr></thead><tbody>`;
   for (const r of rows) {
-    h += `<tr class="clickable" data-dest="${esc(r.destination)}"><td class="l"><b>${esc(r.destination)}</b> <span class="muted">${esc(AIRPORTS[r.destination]?.[2] || "")}</span></td>
+    h += `<tr class="clickable" data-dest="${esc(r.destination)}" tabindex="0" role="button"><td class="l"><b>${esc(r.destination)}</b> <span class="muted">${esc(AIRPORTS[r.destination]?.[2] || "")}</span></td>
       <td class="l muted">${esc(r.region)}</td><td class="num">${r.distance ? fmt(r.distance) : "—"}</td>`;
     for (const X of cabs) {
       const m = r.cab[X];
@@ -650,10 +667,14 @@ function renderDiscover() {
   $("discoverTable").querySelectorAll("th[data-k]").forEach((el) =>
     el.onclick = () => { const k = el.dataset.k; const st = sortState.discover; st.dir = st.key === k ? -st.dir : 1; st.key = k; saveSettings(); renderDiscover(); });
   const bestOriginByDest = new Map(rows.map((r) => [r.destination, r.bestOrigin]));
-  $("discoverTable").querySelectorAll("tr[data-dest]").forEach((tr) =>
-    tr.onclick = () => openGridFor(
+  // Row click, Enter or Space -> that destination's date calendar from its best origin.
+  $("discoverTable").querySelectorAll("tr[data-dest]").forEach((tr) => {
+    const open = (viaKeyboard) => openGridFor(
       bestOriginByDest.get(tr.dataset.dest) || settings.home[0] || RECORDS.find((r) => r.destination === tr.dataset.dest)?.origin,
-      tr.dataset.dest));
+      tr.dataset.dest, null, viaKeyboard);
+    tr.onclick = () => open(false);
+    tr.onkeydown = (e) => { if (rowKey(e, tr)) open(true); };
+  });
   renderMap(rows);
 }
 
@@ -741,7 +762,7 @@ function renderSweet() {
     const t = r.mpm != null && mx > mn ? (r.mpm - mn) / (mx - mn) : null;
     const bestTitle = `${fmt(r.miles)} pts flies on ${r.bestDates.length} date${r.bestDates.length === 1 ? "" : "s"}: ${r.bestDates.slice(0, 10).join(", ")}${r.bestDates.length > 10 ? ", …" : ""} — click for the calendar`;
     const datesTitle = `${r.dateCount} departure date${r.dateCount === 1 ? "" : "s"} with availability, ${r.dateFirst} → ${r.dateLast} — click for the calendar`;
-    h += `<tr class="clickable" data-o="${esc(r.origin)}" data-d="${esc(r.destination)}" data-c="${r.cabin}"><td class="l"><span class="watch${watches[r.fareKey] ? " on" : ""}" data-watch="${esc(r.fareKey)}" title="Watch this route">${watches[r.fareKey] ? "★" : "☆"}</span> <b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}${viaBadge(r.origin, r.destination, { cabin: r.cabin, date: r.bestDate }, r.direct)}</td>
+    h += `<tr class="clickable" data-o="${esc(r.origin)}" data-d="${esc(r.destination)}" data-c="${r.cabin}" tabindex="0" role="button"><td class="l"><span class="watch${watches[r.fareKey] ? " on" : ""}" data-watch="${esc(r.fareKey)}" tabindex="0" role="button" title="Watch this route">${watches[r.fareKey] ? "★" : "☆"}</span> <b>${esc(r.origin)}→${esc(r.destination)}</b>${r.direct ? ' <span class="badge direct">nonstop</span>' : ""}${viaBadge(r.origin, r.destination, { cabin: r.cabin, date: r.bestDate }, r.direct)}</td>
       <td class="l">${cabinLabel(r.cabin)}</td><td class="l muted">${esc(r.region)}</td>
       <td class="num">${r.distance ? fmt(r.distance) : "—"}</td>
       <td class="miles num">${fmt(r.miles)}</td>
@@ -765,10 +786,12 @@ function renderSweet() {
   $("sweetTable").innerHTML = status + histNote + h;
   $("sweetTable").querySelectorAll("input[data-fare]").forEach((inp) =>
     inp.onchange = () => { const v = parseFloat(inp.value); if (v > 0) cashFares[inp.dataset.fare] = v; else delete cashFares[inp.dataset.fare]; saveFares(); renderSweet(); });
-  $("sweetTable").querySelectorAll("[data-watch]").forEach((el) => el.onclick = () => toggleWatch(el.dataset.watch));
-  // Row click -> this route+cabin's full date calendar (ignore the star and fare input).
-  $("sweetTable").querySelectorAll("tr.clickable").forEach((tr) =>
-    tr.onclick = (e) => { if (e.target.closest("input,[data-watch]")) return; openGridFor(tr.dataset.o, tr.dataset.d, tr.dataset.c); });
+  wireStars($("sweetTable"));
+  // Row click, Enter or Space -> this route+cabin's full date calendar (ignore the star and fare input).
+  $("sweetTable").querySelectorAll("tr.clickable").forEach((tr) => {
+    tr.onclick = (e) => { if (e.target.closest("input,[data-watch]")) return; openGridFor(tr.dataset.o, tr.dataset.d, tr.dataset.c); };
+    tr.onkeydown = (e) => { if (rowKey(e, tr)) openGridFor(tr.dataset.o, tr.dataset.d, tr.dataset.c, true); };
+  });
 }
 
 // === View 3: Flexible date grid ============================================
@@ -792,7 +815,7 @@ function updateGridDestinations() {
   [...dSel.options].forEach((op) => op.value = op.textContent.split(" — ")[0]);
   if (cur && dests.includes(cur)) dSel.value = cur;
 }
-function openGridFor(origin, dest, cabin) {
+function openGridFor(origin, dest, cabin, viaKeyboard) {
   if (origin) $("gOrigin").value = origin;
   updateGridDestinations();
   if (dest) $("gDest").value = dest;
@@ -815,6 +838,8 @@ function openGridFor(origin, dest, cabin) {
   }
   switchTab("grid");
   renderGrid();
+  // A keyboard jump lands on the first available date, so Tab / Enter continue in the calendar.
+  if (viaKeyboard) ($("gridMonths").querySelector(".cell.has") || $("gOrigin")).focus();
 }
 function renderGrid() {
   const o = $("gOrigin").value, d = $("gDest").value, X = $("gCabin").value;
@@ -1130,7 +1155,7 @@ function renderWatch() {
       : w.underTarget === false ? `<span class="muted">${fmt(w.current - w.target)} over</span>`
       : '<span class="badge direct">available</span>';
     h += `<tr>
-      <td class="l"><span class="watch on" data-watch="${esc(w.key)}" title="Unwatch">★</span></td>
+      <td class="l"><span class="watch on" data-watch="${esc(w.key)}" tabindex="0" role="button" title="Unwatch">★</span></td>
       <td class="l"><b>${esc(w.origin)}→${esc(w.dest)}</b> <span class="muted">${esc(AIRPORTS[w.dest]?.[2] || "")}</span></td>
       <td class="l">${cabinLabel(w.cabin)}</td>
       <td class="miles num">${w.current != null ? fmt(w.current) : "—"}</td>
@@ -1148,7 +1173,7 @@ function renderWatch() {
     catch { const r = document.createRange(); r.selectNodeContents($("watchCmd")); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
     btn.textContent = "Copied"; setTimeout(() => { btn.textContent = "Copy"; }, 1500);
   };
-  $("watchBody").querySelectorAll("[data-watch]").forEach((el) => el.onclick = () => toggleWatch(el.dataset.watch));
+  wireStars($("watchBody"));
   $("watchBody").querySelectorAll("input[data-wtarget]").forEach((inp) =>
     inp.onchange = () => { const v = parseInt(inp.value); watches[inp.dataset.wtarget] = { target: v > 0 ? v : null }; saveWatches(); renderWatch(); });
 }
