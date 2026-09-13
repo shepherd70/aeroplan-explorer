@@ -1,0 +1,8 @@
+# The only third-party code here is the GitHub Actions used by CI; keep them current.
+# There are no package dependencies to watch.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

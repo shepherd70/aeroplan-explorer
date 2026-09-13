@@ -45,7 +45,7 @@ Chosen: **1(a)** synthetic samples with a history rewrite; **2** MIT, © Travis 
 
 ### Phase 0 — before the flip (one or two PRs, plus your decisions above)
 - [x] Land the fixes from the 2026-09-13 review pass (PR #10) (ten confirmed findings, all UX/consistency; none block publishing but a public first impression should not include them).
-- [x] Samples are synthetic: `make-sample.mjs` now generates them (real airports, invented everything else; deterministic; `test/sample.test.mjs`). History rewrite to strip the old real-data blobs: **after this PR merges** (needs the final main).
+- [x] Samples are synthetic: `make-sample.mjs` now generates them (real airports, invented everything else; deterministic; `test/sample.test.mjs`). History rewritten 2026-09-13 15:03 UTC (`git filter-repo --strip-blobs-with-ids`, 7 old sample blobs removed, tip `ae9a15a` → `dfe2b99`); ask GitHub support to run garbage collection if the old blobs must be unreachable by hash sooner.
 - [x] `LICENSE` (MIT).
 - [x] README public pass: one-paragraph pitch with a screenshot of the Sweet-spot finder and the date grid (headless Chrome can produce them from the sample); **Prerequisites** (Node 18+, seats.aero Pro, Chrome/Edge for the file-handle flow, other browsers via the fallback picker); **Disclaimer**; **Contributing** (no dependencies, `node --test`, UI changes verified in a browser via the `verify` skill, one PR per change); link to seats.aero and its quota rules.
 - [x] Generalize the path in `.claude/skills/verify/SKILL.md`; `tasks/plan.md` → `docs/design/itinerary-detail.md`; `tasks/todo.md` → `CHANGELOG.md`; this plan → `docs/`.
@@ -53,11 +53,11 @@ Chosen: **1(a)** synthetic samples with a history rewrite; **2** MIT, © Travis 
 - [x] Delete the stale `AMADEUS_*` lines from your local `.env`.
 
 ### Phase 1 — the flip (your call to run; irreversible for history)
-- [ ] `gh repo edit --visibility public --accept-visibility-change-consequences`
-- [ ] Topics: `aeroplan`, `air-canada`, `award-travel`, `seats-aero`, `points`, `miles`, `no-build`.
-- [ ] Branch protection on `main`: require a PR and the CI check; no force pushes.
-- [ ] Security: enable secret scanning + push protection (free on public repos); enable Dependabot for GitHub Actions only (no package deps).
-- [ ] Tag `v1.0.0` and a GitHub release whose notes summarize the six views, the two scripts and the quota behaviour.
+- [x] `gh repo edit --visibility public --accept-visibility-change-consequences` — public since 2026-09-13
+- [x] Topics: `aeroplan`, `air-canada`, `award-travel`, `seats-aero`, `points`, `miles`, `no-build`.
+- [x] Branch protection on `main`: PR required (no approvals needed), the four CI checks required and up to date, enforced for admins too, no force pushes or deletions.
+- [x] Security: secret scanning + push protection, vulnerability alerts and automated security fixes enabled; Dependabot version updates for GitHub Actions via `.github/dependabot.yml` (this PR).
+- [x] Tag `v1.0.0` and a GitHub release whose notes summarize the six views, the two scripts and the quota behaviour.
 
 ### Phase 2 — after
 - [ ] Share where it helps (seats.aero's community, the Aeroplan subreddit) with the non-commercial framing.
