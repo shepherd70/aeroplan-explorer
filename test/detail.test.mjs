@@ -3,6 +3,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeTrip } from "../detail.mjs";
+import { widenWindow } from "../detail.mjs";
+
+test("widenWindow stretches a route's pulled window to cover a --date pull", () => {
+  const win = { start: "2026-09-12", end: "2026-12-11" };
+  assert.deepEqual(widenWindow(win, "2026-12-20"), { start: "2026-09-12", end: "2026-12-20" });
+  assert.deepEqual(widenWindow(win, "2026-09-01"), { start: "2026-09-01", end: "2026-12-11" });
+  assert.deepEqual(widenWindow(win, "2026-10-01"), win);
+  assert.deepEqual(widenWindow(undefined, "2026-10-01"), { start: "2026-10-01", end: "2026-10-01" });
+  assert.deepEqual(widenWindow({ start: "2026-10-05" }, "2026-10-01"), { start: "2026-10-01", end: "2026-10-01" });
+});
 
 // --- fixtures: real seats.aero shapes captured 2026-09-11 (trimmed) ----------
 // Search endpoint `AvailabilityTrips[]` element — no per-segment data.
