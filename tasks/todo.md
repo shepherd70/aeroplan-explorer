@@ -55,6 +55,19 @@ Trend, Watchlist status and the freshness pill compare pulls, so they need a dai
 - [x] Keys typed into a row's fare input never trigger the row; README notes the keyboard model
 - [x] Verified in headless Chrome on the sample (rows, stars, fare-input guard, focus after re-render and after unwatch)
 
+## 2026-09-13 — review pass over PRs #5–#9 (branch `review-fixes`)
+Independent `/code-review high` over `877ff98..main`: ten confirmed findings, all fixed here.
+- [x] `detailStatus` no longer hides a `--date` day beyond the route window (what is in the file wins); `detail.mjs --date` also widens the window (`widenWindow`, tested)
+- [x] Round trips: a selection the re-paired table no longer contains is cleared (nights / filters / Reload)
+- [x] Each leg box suggests only its own route's `node detail.mjs` command (re-pulling the good direction would drop its exact layovers)
+- [x] `make-sample.mjs`: return legs trimmed before the byte budget is measured; the note advertises only return legs actually written; a bad trips file warns and never blocks the cache sample; samples regenerated (budget now fully used)
+- [x] Keyboard jump into the grid focuses the preserved selection before the first cell
+- [x] Newer-schema prompt asks once per schema (remembered in settings), not on every Reload and page load
+- [x] Row / cell picks toggle the selection class and redraw only the panel — focus and scroll survive; both keydown handlers use `rowKey`
+- [x] Unwatching the last Watchlist row moves focus to the Watchlist tab button
+- [x] Verified in headless Chrome (live YYZ⇄LHR detail) and by running the generator against outbound-only, null-route and invalid-JSON trips files
+- Not done (cut from the review as cleanup-tier): unit tests for `applyCliFlags`; renderRT's footer re-derives the no-file / not-pulled split
+
 ## Follow-ups
 - [ ] Sortable column headers (Discover, What can I book) are still click-only
 - [x] Keyboard access to grid date cells (`tabindex="0"` + Enter/Space on `#gridMonths`) — 2026-09-12
