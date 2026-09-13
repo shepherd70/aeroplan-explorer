@@ -512,9 +512,12 @@ function ingestTripsText(text) {
   if (Array.isArray(parsed?.records)) { alert("That's the availability cache, not the itineraries file — pick trips.cache.json (written by node detail.mjs)."); return; }
   if (!parsed || typeof parsed.routes !== "object" || Array.isArray(parsed.routes)) { alert("Unexpected file format — expected { meta, routes } from node detail.mjs."); return; }
   // A newer detail.mjs may write fields this page doesn't know; say so instead of rendering blanks.
+  // Once per schema version: this path also runs on ↻ Reload and on the page-load restore.
   const schema = parsed.meta?.schema;
-  if (Number.isFinite(schema) && schema > TRIPS_SCHEMA &&
-      !confirm(`This itineraries file uses schema ${schema}, but this page understands schema ${TRIPS_SCHEMA} — it was written by a newer detail.mjs. Some columns may come up blank. Load it anyway?`)) return;
+  if (Number.isFinite(schema) && schema > TRIPS_SCHEMA && schema > (settings.acceptedTripsSchema || 0)) {
+    if (!confirm(`This itineraries file uses schema ${schema}, but this page understands schema ${TRIPS_SCHEMA} — it was written by a newer detail.mjs. Some columns may come up blank. Load it anyway?`)) return;
+    settings.acceptedTripsSchema = schema; saveSettings();
+  }
   TRIPS = parsed;
   paintFreshness();
   if (DATA) renderAll();
@@ -535,15 +538,18 @@ const $ = (id) => document.getElementById(id);
 // control inside it (the fare input, say). Returns true after preventing the default (Space scrolls).
 const rowKey = (e, el) => { if (e.target !== el || (e.key !== "Enter" && e.key !== " ")) return false; e.preventDefault(); return true; };
 // Watch stars: click, Enter or Space toggles. Toggling re-renders the table, so a keyboard toggle
-// puts focus back on the same star (or the first one left, when a Watchlist row just went away).
+// puts focus back on the same star, else the first one left (a Watchlist row just went away),
+// else the view's tab button (the last Watchlist row went away and the table is now empty).
 function wireStars(root) {
+  const view = root.closest(".view");
+  const tabBtn = view && document.querySelector(`nav.tabs button[data-tab="${view.id.replace(/^view-/, "")}"]`);
   root.querySelectorAll("[data-watch]").forEach((el) => {
     el.onclick = () => toggleWatch(el.dataset.watch);
     el.onkeydown = (e) => {
       if (!rowKey(e, el)) return;
       const key = el.dataset.watch;
       toggleWatch(key);
-      (root.querySelector(`[data-watch="${CSS.escape(key)}"]`) || root.querySelector("[data-watch]"))?.focus();
+      (root.querySelector(`[data-watch="${CSS.escape(key)}"]`) || root.querySelector("[data-watch]") || tabBtn)?.focus();
     };
   });
 }
@@ -838,8 +844,9 @@ function openGridFor(origin, dest, cabin, viaKeyboard) {
   }
   switchTab("grid");
   renderGrid();
-  // A keyboard jump lands on the first available date, so Tab / Enter continue in the calendar.
-  if (viaKeyboard) ($("gridMonths").querySelector(".cell.has") || $("gOrigin")).focus();
+  // A keyboard jump lands on the selected date when this route already has one (renderGrid keeps
+  // it), else the first available date, so Tab / Enter continue where the panel is.
+  if (viaKeyboard) ($("gridMonths").querySelector(".cell.selected") || $("gridMonths").querySelector(".cell.has") || $("gOrigin")).focus();
 }
 function renderGrid() {
   const o = $("gOrigin").value, d = $("gDest").value, X = $("gCabin").value;
@@ -919,11 +926,13 @@ const agoText = (iso) => {
   return !Number.isFinite(h) ? "" : h < 1 ? "just now" : h < 24 ? `${Math.round(h)}h ago` : `${Math.round(h / 24)}d ago`;
 };
 // One leg's itineraries for a date + cabin — or one sentence on why there are none — as HTML.
-// Shared by the date grid's panel and the Round-trips panel. `cmd` is the detail command the
-// caller wants suggested (it knows which routes are missing); `moreId` names the "Show all"
-// button so the caller can wire it (empty = no button).
-function legItinerariesHtml(o, d, date, X, { title, cmd, showAll = false, moreId = "" }) {
+// Shared by the date grid's panel and the Round-trips panel. Suggested commands name only this
+// leg's route — re-pulling a direction that is fine would discard its exact layovers (the
+// Round-trips footer covers both directions). `moreId` names the "Show all" button so the
+// caller can wire it (empty = no button).
+function legItinerariesHtml(o, d, date, X, { title, showAll = false, moreId = "" }) {
   const head = `<h4>${title}</h4>`;
+  const cmd = `node detail.mjs ${esc(o)}-${esc(d)}`;
   const hint = (t) => `${head}<p class="hint">${t}</p>`;
   const route = `${esc(o)}→${esc(d)}`;
   const { status, detail } = Explore.detailStatus(TRIPS, o, d, date);
@@ -975,7 +984,7 @@ function renderItineraries() {
   if (!gridSel) { box.innerHTML = ""; return; }
   const { o, d, date } = gridSel, X = $("gCabin").value;
   box.innerHTML = legItinerariesHtml(o, d, date, X, {
-    title: `${fmtDate(date)} · ${esc(o)}→${esc(d)} · ${cabinLabel(X)}`, cmd: `node detail.mjs ${o}-${d}`, showAll: gridSelAll, moreId: "itinsMore" });
+    title: `${fmtDate(date)} · ${esc(o)}→${esc(d)} · ${cabinLabel(X)}`, showAll: gridSelAll, moreId: "itinsMore" });
   const more = $("itinsMore"); if (more) more.onclick = () => { gridSelAll = true; renderItineraries(); };
 }
 
@@ -1069,6 +1078,8 @@ function renderRT() {
     dateOut: (a, b) => (a.dateOut < b.dateOut ? -1 : a.dateOut > b.dateOut ? 1 : 0),
   }[settings.sortRT] || ((a, b) => a.totalMiles - b.totalMiles);
   const rows = res.rows.slice().sort(cmp);
+  // Nights, filters or a Reload can re-pair the rows; a selection that no longer exists goes away.
+  if (rtSel && !rows.some((r) => r.dateOut === rtSel.dateOut && r.dateRet === rtSel.dateRet)) { rtSel = null; rtSelAll = false; }
   const bal = settings.balance;
   const curHdr = rows.find((r) => r.taxesCurrency)?.taxesCurrency || "";
   info.textContent = `${rows.length} round trip${rows.length === 1 ? "" : "s"} ${origin}⇄${dest} · ${cabinLabel(cabin)} · ${settings.rtMinNights}–${settings.rtMaxNights} nights`;
@@ -1104,16 +1115,17 @@ function renderRT() {
     <p class="hint">${detailHint}</p>
     <p class="hint">Each row pairs an outbound date with the cheapest-points return ${settings.rtMinNights}–${settings.rtMaxNights} nights later. Points &amp; taxes are the real total of both legs; Aeroplan still prices each direction separately at booking, so confirm both. RT ¢/pt uses the two one-way cash fares when present.</p>`;
   $("rtBody").innerHTML = h;
-  // Row click, Enter or Space -> both legs' itineraries above the table. Re-rendering replaces
-  // the rows, so a keyboard pick re-focuses the new selected row to keep the Tab position.
-  const pick = (tr, viaKeyboard) => {
+  // Row click, Enter or Space -> both legs' itineraries above the table. Only the selection
+  // class and the panel change, so focus and the table's scroll position stay where they were.
+  const pick = (tr) => {
     rtSel = { origin, dest, cabin, dateOut: tr.dataset.out, dateRet: tr.dataset.ret }; rtSelAll = false;
-    renderRT();
-    if (viaKeyboard) $("rtBody").querySelector("tr.selected")?.focus();
+    $("rtBody").querySelectorAll("tr.selected").forEach((x) => x.classList.remove("selected"));
+    tr.classList.add("selected");
+    renderRTItineraries(origin, dest, cabin);
   };
   $("rtBody").querySelectorAll("tr.clickable").forEach((tr) => {
-    tr.onclick = () => pick(tr, false);
-    tr.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(tr, true); } };
+    tr.onclick = () => pick(tr);
+    tr.onkeydown = (e) => { if (rowKey(e, tr)) pick(tr); };
   });
   renderRTItineraries(origin, dest, cabin);
 }
@@ -1121,9 +1133,8 @@ function renderRT() {
 function renderRTItineraries(origin, dest, cabin) {
   const box = $("rtItins");
   if (!rtSel) { box.innerHTML = ""; return; }
-  const cmd = `node detail.mjs ${origin}-${dest} ${dest}-${origin}`;
   const leg = (o, d, date, label, moreId) => `<div class="leg">${legItinerariesHtml(o, d, date, cabin, {
-    title: `${label} · ${fmtDate(date)} · ${esc(o)}→${esc(d)} · ${cabinLabel(cabin)}`, cmd, showAll: rtSelAll, moreId })}</div>`;
+    title: `${label} · ${fmtDate(date)} · ${esc(o)}→${esc(d)} · ${cabinLabel(cabin)}`, showAll: rtSelAll, moreId })}</div>`;
   box.innerHTML = leg(origin, dest, rtSel.dateOut, "Outbound", "rtMoreOut") + leg(dest, origin, rtSel.dateRet, "Return", "rtMoreRet");
   for (const id of ["rtMoreOut", "rtMoreRet"]) { const b = $(id); if (b) b.onclick = () => { rtSelAll = true; renderRTItineraries(origin, dest, cabin); }; }
 }
@@ -1270,21 +1281,16 @@ function switchTab(name) {
   $("gOrigin").addEventListener("change", () => { updateGridDestinations(); renderGrid(); });
   $("gDest").addEventListener("change", renderGrid);
   $("gCabin").addEventListener("change", renderGrid);
-  // Pick a date cell (mouse or keyboard) and open its itinerary panel. Re-rendering replaces the
-  // cells, so a keyboard pick re-focuses the new selected cell to keep the Tab position.
-  const selectGridDate = (cell, viaKeyboard) => {
+  // Pick a date cell (mouse or keyboard) and open its itinerary panel. Only the selection class
+  // and the panel change, so the focused cell and the page's scroll position stay put.
+  const selectGridDate = (cell) => {
     gridSel = { o: $("gOrigin").value, d: $("gDest").value, date: cell.dataset.date }; gridSelAll = false;
-    renderGrid();
-    if (viaKeyboard) $("gridMonths").querySelector(".cell.selected")?.focus();
+    $("gridMonths").querySelectorAll(".cell.selected").forEach((x) => x.classList.remove("selected"));
+    cell.classList.add("selected");
+    renderItineraries();
   };
-  $("gridMonths").addEventListener("click", (e) => { const cell = e.target.closest(".cell.has"); if (cell) selectGridDate(cell, false); });
-  $("gridMonths").addEventListener("keydown", (e) => {
-    if (e.key !== "Enter" && e.key !== " ") return;
-    const cell = e.target.closest(".cell.has");
-    if (!cell) return;
-    e.preventDefault(); // Space would otherwise scroll the page
-    selectGridDate(cell, true);
-  });
+  $("gridMonths").addEventListener("click", (e) => { const cell = e.target.closest(".cell.has"); if (cell) selectGridDate(cell); });
+  $("gridMonths").addEventListener("keydown", (e) => { const cell = e.target.closest(".cell.has"); if (cell && rowKey(e, cell)) selectGridDate(cell); });
   $("sweetSort").addEventListener("change", () => { settings.sortSweet = $("sweetSort").value; saveSettings(); renderSweet(); });
   $("rtOrigin").addEventListener("change", () => { updateRTDests(); renderRT(); });
   $("rtDest").addEventListener("change", renderRT);
